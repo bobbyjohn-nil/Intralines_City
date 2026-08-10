@@ -131,6 +131,16 @@ Rules:
 - Prefer finishing what is in progress over starting what is next.
 - If the user adds something to the backlog mid-session, acknowledge it but finish the current item first unless they say otherwise.
 
+## Git
+
+This is a git repo. Use it as the safety net for parallel work.
+
+- **Commit when an item finishes**, at the same moment you move it into the changelog — one commit per backlog item, message written player-facing like the changelog line. A verified item and its commit go together.
+- **Never commit a broken build.** If `playtester` failed it, fix it or leave it uncommitted; do not commit and promise to fix later.
+- **Check `git status` before a fan-out** so a batch of agents starts from a clean tree. When a parallel pass goes wrong, `git checkout .` is the recovery, and it only works if the tree was clean going in.
+- **Never push, never force, never rewrite history, never delete a branch.** Local commits and tags only — pushing is the user's call.
+- Large binary assets: check `.gitattributes` before committing new asset types. Once a big file is in history it is there permanently.
+
 ## Finishing
 
 End every run with: what shipped, what `playtester` actually verified, what is still broken, and the single most valuable next step. Offer a devlog if something notable landed.
