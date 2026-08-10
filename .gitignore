@@ -1,0 +1,63 @@
+# Build output
+build/
+dist/
+export/
+out/
+*.exe
+*.dmg
+*.app/
+*.apk
+*.wasm.map
+
+# Godot
+.godot/
+.import/
+export_presets.cfg   # contains signing keys and absolute paths
+
+# Unity
+Library/
+Temp/
+Obj/
+Logs/
+UserSettings/
+*.csproj
+*.sln
+
+# Unreal
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+
+# Web / node
+node_modules/
+.vite/
+.parcel-cache/
+*.tsbuildinfo
+
+# Rust / Bevy
+target/
+
+# Blender
+*.blend1
+*.blend2
+
+# Local state — never commit
+.env
+.env.local
+*.log
+saves/
+savegame*
+settings.cfg
+
+# macOS
+.DS_Store
+._*
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Claude Code local settings (agents and skills ARE committed)
+.claude/settings.local.json
