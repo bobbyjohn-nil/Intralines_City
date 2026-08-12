@@ -1,11 +1,18 @@
 # Intralines Bus Simulator — Game Bible
 
 > Every agent in the crew reads this file first.
-> Compiled from the **v1.18 Complete Manual**. Lines marked **[derived]** were inferred rather than
-> stated — confirm or correct them. Lines marked **TBD** are genuinely absent from the manual.
 >
-> The manual is the authority on mechanics and numbers. `src/game/constants.ts` is the authority on
-> tuning values — always read it before quoting a number.
+> **The game is being built from its manual.** No source is inherited — [the complete v1.18
+> manual](docs/design/manual-v1.18.md) is the specification, and we implement it. It describes a
+> finished game in full detail: every mechanic, formula, threshold and UI decision.
+>
+> That makes the manual the authority on **what** to build. It is not authority on **how** — file
+> layout, framework idiom and code structure are ours to choose. Where the manual names a number,
+> use it exactly. Where it describes behaviour without a number, `game-designer` picks one and marks
+> it `# tune`.
+>
+> Once `src/game/constants.ts` exists it becomes authoritative for tuning values, and the manual
+> becomes the record of intent. Lines below marked **[derived]** were inferred rather than stated.
 
 ## Elevator pitch
 
@@ -34,20 +41,33 @@ commuters decide whether your service beats driving.
 
 | | |
 |---|---|
-| Language | TypeScript |
-| Platform | Browser, offline-capable (service worker + IndexedDB) |
-| UI framework | **TBD** — not stated in the manual |
-| Map rendering | Vector tiles (OpenFreeMap) restyled to the paper palette, with 3D building extrusions; **plus** a fully self-rendered offline basemap built from the city pack |
-| Simulation | Runs in a **worker thread**, debounced ~250 ms on network change |
-| Persistence | One save per city in `localStorage`; city packs (10–40 MB) in IndexedDB under a format version |
-| Data sources | TIGERweb block groups, ACS/LODES population and jobs, OpenStreetMap streets/water/parks/landuse, FHWA/BTS AADT traffic counts |
+Stated in the manual where marked; otherwise **[chosen]** — a default picked to fit the manual's
+evidence. Change any `[chosen]` row before implementation starts and the rest of the crew follows.
+
+| | |
+|---|---|
+| Language | TypeScript — *stated* |
+| Platform | Browser, offline-capable (service worker + IndexedDB) — *stated* |
+| Build tool | **[chosen]** Vite |
+| UI framework | **[chosen]** React — the manual says menus are "portaled outside the dock", which is React's idiom |
+| Map rendering | MapLibre GL JS **[chosen]** for OpenFreeMap vector tiles restyled to the paper palette with 3D extrusions — *the tile source is stated*; **plus** a self-rendered offline basemap from the city pack — *stated* |
+| 3D (buses, station diorama) | **[chosen]** Three.js, via a custom MapLibre layer for on-map buses |
+| Simulation | Web Worker, debounced ~250 ms on network change — *stated* |
+| Persistence | One save per city in `localStorage`; city packs (10–40 MB) in IndexedDB under a format version — *stated* |
+| Tests | **[chosen]** Vitest |
+| Data sources | TIGERweb block groups, ACS/LODES population and jobs, OpenStreetMap streets/water/parks/landuse, FHWA/BTS AADT traffic counts — *stated* |
 | Distribution | **TBD** |
 
 ## Build & run
 
+`npm run bake` is *stated* by the manual. The rest are **[chosen]** conventions — implement them to
+match, and update this block if they change.
+
 ```bash
-npm run bake    # bakes real-city packs (runs in CI; packs ship pre-built)
-# dev server / build / test commands — TBD, not stated in the manual
+npm run dev      # dev server
+npm run build    # production build
+npm run test     # test suite
+npm run bake     # bake real-city packs (also runs in CI; packs ship pre-built)
 ```
 
 ## Project layout
@@ -155,8 +175,13 @@ Quoted from the manual; **verify against `src/game/constants.ts` before use.**
 
 ## Current state
 
-Shipped at **v1.18**. This is a live game with real saves in the wild — **backward save
-compatibility is a hard constraint on every change**, not a nice-to-have.
+**Nothing is built yet.** The repository holds the crew and the spec; `src/` does not exist.
 
-> ⚠️ The game's source is **not in this repository**. Point the crew at the real repo, or move this
-> bible alongside the code, before asking anyone to implement anything.
+The manual describes a v1.18 game, so it documents years of accumulated systems. **Do not try to
+build it in manual order.** Follow the build order in [BACKLOG.md](BACKLOG.md): a playable slice
+first — one procedural city, one line, buses that move, money that changes — then real city data,
+then the depth. Most of the manual is unreachable until the loop underneath it runs.
+
+The manual's save-compatibility rules describe a shipped game protecting live saves. Until v1.0
+there are none, and the format is free to change. Build the **versioned save envelope** early
+anyway — retrofitting it is the expensive path, and it is the one thing the manual is emphatic about.
