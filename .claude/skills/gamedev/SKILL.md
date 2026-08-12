@@ -20,7 +20,11 @@ Then read `docs/design/` and skim the source layout so you know what already exi
 | `game-designer` | specs, mechanics, tuning numbers, cut lines |
 | `gameplay-coder` | runtime systems, movement, combat, state, save/load |
 | `modeler` | **prototype geometry only** — blockouts, proxies, collision — plus importing the user's real models |
+| `2d-artist` | stroke icons, the drawn identity, palettes, light/dark theming |
+| `vfx-artist` | shaders, time-of-day tinting, data gradients, zoom response, transitions |
 | `animator` | motion, easing, juice, hitstop, screenshake, particles |
+| `writer` | every word the player reads — labels, hints, warnings, errors, flavour |
+| `test-engineer` | automated tests — sim math, save migration, regression suites |
 | `audio-designer` | SFX hookup, mixing, buses, music |
 | `level-designer` | levels, encounters, spawn data, difficulty curve |
 | `ui-designer` | menus, HUD, settings, accessibility, controller nav |
@@ -38,7 +42,11 @@ Match the request to the smallest sufficient crew. Do not run all nine for a one
 - **User dropped models in `assets/incoming/`** → `modeler`, one agent per model so they run concurrently. It measures scale, fixes orientation and origin, wires materials, generates collision, and places them. Then `playtester` confirms they render.
 - **"I need a placeholder / blockout"** → `modeler`. It prototypes only — proxy geometry at correct scale, never final art. Real assets come from the user; anything `modeler` generates is temporary and must be logged in `BACKLOG.md` as an asset still owed.
 - **"The imported model looks wrong"** (huge, sideways, black, floating) → `modeler` alone. Almost always an unapplied transform, an axis convention, or a texture colorspace.
-- **"Add a menu / HUD / settings"** → `ui-designer` → `playtester`.
+- **"Add a menu / HUD / settings"** → `ui-designer`, with `writer` and `2d-artist` in parallel for the copy and icons → `playtester`.
+- **"This message is confusing / needs explaining"** → `writer` alone.
+- **"Needs an icon / looks off-style"** → `2d-artist` alone.
+- **"The map/rendering looks wrong or runs slow"** → `vfx-artist` → `playtester`.
+- **Any change to sim math, the save format, or a shared rule predicate** → the owning agent, then **`test-engineer` in the same pass**. These are the three places a silent regression costs a player their company.
 - **"It's slow / won't build / let's ship"** → `build-engineer` → `playtester` on a clean build.
 - **"Write a devlog / patch notes"** → `devlog-writer` alone. It reads the diff itself.
 - **"Build me a whole game"** → run the vertical slice loop below.

@@ -5,7 +5,7 @@ A game project. Read [GAME.md](GAME.md) before doing anything — it holds the e
 ## Working here
 
 Use the `/gamedev` skill to orchestrate work across the specialist agents in `.claude/agents/`:
-`game-designer`, `gameplay-coder`, `modeler`, `animator`, `audio-designer`, `level-designer`, `ui-designer`, `playtester`, `build-engineer`, `devlog-writer`, `reference-analyst`.
+`game-designer`, `gameplay-coder`, `test-engineer`, `modeler`, `2d-artist`, `vfx-artist`, `animator`, `audio-designer`, `level-designer`, `ui-designer`, `writer`, `playtester`, `build-engineer`, `devlog-writer`, `reference-analyst`.
 
 Reference material from other games goes in [reference/](reference/README.md) — screenshots, frame sequences, patch notes. `reference-analyst` measures it into specs; nothing in that folder ships.
 
