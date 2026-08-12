@@ -6,8 +6,10 @@ import {
   busStrokeWidthPx,
   computeBusMarkerPoints,
   createBusMarkerPointsScratch,
+  getBusStripeColor,
   getLineColor,
   pointerMovedPastClickThreshold,
+  routeWidthPx,
   stopRadiusPx,
 } from './drawOverlays';
 import { getTimeOfDayTint } from './timeOfDay';
@@ -238,6 +240,69 @@ describe('busStrokeWidthPx', () => {
       .toBeCloseTo(BUS_MARKER_WIDTH_MIN_PX * BUS_STROKE_WIDTH_RATIO, 6);
     expect(busStrokeWidthPx(busMarkerWidthPx(viewportAtZoom(MAX_ZOOM))))
       .toBeCloseTo(BUS_MARKER_WIDTH_MAX_PX * BUS_STROKE_WIDTH_RATIO, 6);
+  });
+});
+
+describe('routeWidthPx vs. busMarkerWidthPx (regression: "bus optically merged into its own route ' +
+  'line" — the route stroke was nearly as wide as the bus riding on it at the zoom range most play ' +
+  'happens in, so the vehicle read as a notch on the line, not a distinct object)', () => {
+  // Exactly the zoom range the playtest diagnosis names: the floor-dominated regime, where
+  // `routeWidthPx` is pinned to `ROAD_MIN_WIDTH_PX.motorway` (not yet growing with true-scale
+  // width) and `busMarkerWidthPx` is pinned to `BUS_MARKER_WIDTH_MIN_PX` — this covers the default
+  // fit-to-bounds view of a whole city and everything zoomed further out from it, i.e. the state
+  // most of a play session is actually in. Above this range a route's *true-scale* width can
+  // legitimately exceed a bus's (a real motorway genuinely is many times a bus's width up close) —
+  // that is correct cartography at street-level zoom, not this defect, so this regression is
+  // deliberately scoped to where the bug actually manifested rather than the full zoom range.
+  const TYPICAL_PLAY_ZOOMS = [MIN_ZOOM, MIN_ZOOM + 2, 8, 10, 12, 14];
+  // Chosen below the *measured* ratio at the fix (1.6, see the render task's numeric defense) with
+  // headroom for a future palette/constant tweak, but far above the pre-fix measured ratio (1.18)
+  // — a regression back toward "barely bigger" fails loudly instead of by eye.
+  const MIN_BUS_TO_ROUTE_WIDTH_RATIO = 1.5;
+
+  it('the bus marker is unambiguously wider than the route it rides on, across typical play zooms', () => {
+    for (const zoom of TYPICAL_PLAY_ZOOMS) {
+      const viewport = viewportAtZoom(zoom);
+      const ratio = busMarkerWidthPx(viewport) / routeWidthPx(viewport);
+      expect(ratio).toBeGreaterThan(MIN_BUS_TO_ROUTE_WIDTH_RATIO);
+    }
+  });
+
+  it('holds at the default fit-to-bounds zoom for a representative city-sized viewport — the exact ' +
+    'scenario the playtest flagged', () => {
+    const viewport = Viewport.fitToBounds({ west: -71.2, east: -71.0, south: 42.3, north: 42.4 }, 1000, 700);
+    const ratio = busMarkerWidthPx(viewport) / routeWidthPx(viewport);
+    expect(ratio).toBeGreaterThan(MIN_BUS_TO_ROUTE_WIDTH_RATIO);
+  });
+});
+
+describe('getBusStripeColor (regression: the stripe used to be drawn in the exact same color as ' +
+  'the route beneath the bus — RGB distance 0 — which is what let the vehicle camouflage into its ' +
+  'own line)', () => {
+  // Well below the measured minimum (~91, the closest of the eight `LINE_COLOR_MIX_STOPS` entries
+  // — see `BUS_STRIPE_CONTRAST_MIX_T`'s doc comment) but far above 0, so a regression back toward
+  // "identical to the route" fails loudly instead of by eye.
+  const MIN_STRIPE_VS_ROUTE_DISTANCE = 50;
+
+  it('differs from the route color it is drawn over, for every line in the color cycle', () => {
+    for (let lineId = 0; lineId < LINE_COLOR_MIX_STOPS.length; lineId++) {
+      const routeColor = parseRgb(getLineColor(PALETTE, lineId));
+      const stripeColor = parseRgb(getBusStripeColor(PALETTE, lineId));
+      expect(rgbDistance(stripeColor, routeColor)).toBeGreaterThan(MIN_STRIPE_VS_ROUTE_DISTANCE);
+    }
+  });
+
+  it('is deterministic and cycles the same way getLineColor does', () => {
+    expect(getBusStripeColor(PALETTE, 3)).toBe(getBusStripeColor(PALETTE, 3));
+    for (let id = 0; id < LINE_COLOR_MIX_STOPS.length; id++) {
+      expect(getBusStripeColor(PALETTE, id)).toBe(getBusStripeColor(PALETTE, id + LINE_COLOR_MIX_STOPS.length * 100));
+    }
+  });
+
+  it('never invents a color outside the palette-mix format (always an rgb(...) string)', () => {
+    for (let id = 0; id < LINE_COLOR_MIX_STOPS.length; id++) {
+      expect(getBusStripeColor(PALETTE, id)).toMatch(/^rgb\(\d+, \d+, \d+\)$/);
+    }
   });
 });
 

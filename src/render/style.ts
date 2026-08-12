@@ -163,9 +163,27 @@ export const LINE_COLOR_MIX_STOPS: ReadonlyArray<readonly [PaletteColorKey, Pale
  * A drawn route is always this multiple of the rendered motorway width (`ROAD_WIDTH_M.motorway` /
  * `ROAD_MIN_WIDTH_PX.motorway`, the heaviest street class), so a line reads as "infrastructure on
  * top of the map" — SPEC (task): "clearly heavier than any street" — at every zoom level, not just
- * the one it happened to be tuned at. TUNE
+ * the one it happened to be tuned at.
+ *
+ * Lowered from 1.7 (playtest fix — "bus optically merged into its own route line"). At 1.7, a
+ * route at the floor-dominated zoom range where most play happens (the default fit-to-bounds view
+ * of a whole city and everything zoomed out from it, i.e. below the zoom where a motorway's true
+ * scale overtakes its own legibility floor) rendered `ROAD_MIN_WIDTH_PX.motorway * 1.7` ≈ 8.5px —
+ * nearly as wide as the 10px-wide bus marker riding on it (ratio 1.18, i.e. barely bigger), so the
+ * vehicle read as a notch on the line rather than a distinct object. A route does not need to be
+ * dramatically thicker than a road to read as "infrastructure on top of the map": it is already
+ * drawn after every road layer (see `drawOverlays.ts`'s draw-order contract) and in a saturated
+ * cycling color no road ever uses (`LINE_COLOR_MIX_STOPS`), so width only has to clear the roads it
+ * sits over, not dominate the vehicles that sit over *it*. 1.25 still clears every road class's
+ * floor by a wide margin (1.52x trunk, the next-heaviest class, up to 1.89x primary) while giving
+ * the floor-dominated route width of ~6.25px a 1.6x ratio against the 10px bus marker floor — see
+ * `drawOverlays.test.ts`'s `routeWidthPx` vs. `busMarkerWidthPx` regression for the measured ratio
+ * across the zoom range this actually matters at. Above that zoom range, a route's true-scale width
+ * can still be narrower than a bus is wide relative to it (a real motorway genuinely is many times
+ * a bus's width up close) — that is correct cartography at street-level zoom, not this defect, and
+ * is not what this constant is tuned against. TUNE
  */
-export const ROUTE_WIDTH_MULTIPLIER = 1.7;
+export const ROUTE_WIDTH_MULTIPLIER = 1.25;
 
 /**
  * Stop marker radius clamps between these two screen-pixel bounds — legible when zoomed all the
@@ -247,6 +265,30 @@ export const BUS_BODY_COLOR_MIX = 0.65;
 /** Width of the full-length line-color stripe drawn down the bus marker's body, screen pixels.
  * TUNE */
 export const BUS_STRIPE_WIDTH_PX = 2;
+
+/**
+ * Blend factor mixing a route's own color toward `--panel` (0 = the route's raw color, 1 = pure
+ * `--panel`) to derive the bus's centerline stripe color. Playtest fix, the second half of the
+ * "bus optically merged into its own route line" defect: `drawBuses` used to stripe a bus in the
+ * *exact* color returned by `getLineColor` for that line — identical, at RGB distance 0, to the
+ * route stroke the bus sits on top of (`drawLineRoute` colors a leg with the same `getLineColor`
+ * call). The stripe's job — showing which line a bus belongs to — is worth keeping, but not at the
+ * cost of making the vehicle's centerline read as a literal continuation of the road beneath it.
+ *
+ * `--panel` (not `--ink` or the bus body color) is the mix target because it is the only anchor
+ * that stays a large, roughly *uniform* RGB distance from every one of the eight
+ * `LINE_COLOR_MIX_STOPS` entries regardless of hue: those entries range from deeply saturated
+ * (pure `--blue`, pure `--red`) to already ink-heavy (`blue`→`ink` @ 0.35), and a route color that
+ * already leans dark is closer to `--ink` to start with, so mixing *toward* `--ink` shrinks the gap
+ * fastest for exactly the routes that need it most. `--panel` is light and low-saturation, so
+ * mixing toward it opens a large gap against every entry alike. Measured at 0.5 (this value) across
+ * all eight `LINE_COLOR_MIX_STOPS` entries: minimum stripe-vs-route RGB distance ~91 (worst case,
+ * `amber`→`ink` @ 0.4), maximum ~167 — see `drawOverlays.test.ts`'s stripe-vs-route regression,
+ * which is exactly the assertion this defect needed and never had. The stripe still visibly carries
+ * the route's hue (a tint of it, not an unrelated color), so "which line is this" is still legible
+ * at a glance — it is just no longer camouflage. TUNE
+ */
+export const BUS_STRIPE_CONTRAST_MIX_T = 0.5;
 
 /**
  * Bus marker outline stroke width, as a fraction of `busMarkerWidthPx(viewport)` — the marker's own

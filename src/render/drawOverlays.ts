@@ -36,6 +36,7 @@ import {
   BUS_MARKER_LENGTH_MIN_PX,
   BUS_MARKER_WIDTH_MAX_PX,
   BUS_MARKER_WIDTH_MIN_PX,
+  BUS_STRIPE_CONTRAST_MIX_T,
   BUS_STRIPE_WIDTH_PX,
   BUS_STROKE_WIDTH_RATIO,
   BUS_WIDTH_M,
@@ -103,6 +104,62 @@ function getBusBodyColor(palette: PaperPalette): string {
     busBodyColorCache.set(palette, color);
   }
   return color;
+}
+
+// ── Bus stripe color (contrast-tinted, never identical to the route it rides on) ────────────────
+// See `BUS_STRIPE_CONTRAST_MIX_T`'s doc comment in `style.ts` for the full playtest-fix rationale:
+// the stripe used to be drawn in the exact same color as the route beneath the bus
+// (`getLineColor(palette, lineId)`, called by both `drawLineRoute` and this stripe), which is what
+// let the bus's own centerline optically fuse with its route. `mixHex` only accepts hex palette
+// colors, but `getLineColor` returns an already-mixed `rgb(...)` string, so the tint-toward-`panel`
+// step below works on parsed RGB triples directly instead of re-entering `mixHex` — still entirely
+// palette-derived (every input is either a `getLineColor` output or `palette.panel` itself), never
+// an invented hex.
+
+const RGB_PATTERN = /^rgb\((\d+), (\d+), (\d+)\)$/;
+
+/** Parses the `rgb(r, g, b)` strings `getLineColor`/`mixHex` produce back into components, for the
+ * one place in this module that needs to blend an already-mixed color further (as opposed to
+ * mixing two raw palette hex values, which `mixHex` already covers). */
+function parseRgb(color: string): readonly [number, number, number] {
+  const match = RGB_PATTERN.exec(color);
+  if (!match) throw new Error(`not an rgb(...) string produced by mixHex: ${color}`);
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+/** Blends two already-resolved `rgb(...)` colors, `t=0` is `from`, `t=1` is `to` — the `rgb(...)`
+ * counterpart to `mixHex`'s hex-input blend, used only for `getBusStripeColor` below. */
+function mixRgb(from: string, to: string, t: number): string {
+  const [r0, g0, b0] = parseRgb(from);
+  const [r1, g1, b1] = parseRgb(to);
+  const r = Math.round(r0 + (r1 - r0) * t);
+  const g = Math.round(g0 + (g1 - g0) * t);
+  const b = Math.round(b0 + (b1 - b0) * t);
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+const busStripeColorCache = new WeakMap<PaperPalette, readonly string[]>();
+
+function getBusStripeColorPalette(palette: PaperPalette): readonly string[] {
+  let colors = busStripeColorCache.get(palette);
+  if (!colors) {
+    const panel = mixHex(palette.panel, palette.panel, 0); // palette.panel as an rgb(...) string
+    colors = getLineColorPalette(palette).map((routeColor) =>
+      mixRgb(routeColor, panel, BUS_STRIPE_CONTRAST_MIX_T),
+    );
+    busStripeColorCache.set(palette, colors);
+  }
+  return colors;
+}
+
+/** The bus centerline stripe color for line `lineId` — a `--panel`-tinted variant of
+ * `getLineColor(palette, lineId)`, deliberately *not* identical to the route color it is drawn
+ * over (see `BUS_STRIPE_CONTRAST_MIX_T`'s doc comment). Exported for direct testing of the
+ * stripe-vs-route RGB distance regression. */
+export function getBusStripeColor(palette: PaperPalette, lineId: number): string {
+  const colors = getBusStripeColorPalette(palette);
+  const index = ((lineId % colors.length) + colors.length) % colors.length;
+  return colors[index]!;
 }
 
 // ── Zoom-responsive stop radius ──────────────────────────────────────────────
@@ -244,7 +301,12 @@ export interface DrawOverlaysOptions {
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 
-function routeWidthPx(viewport: Viewport): number {
+/** A route's stroke width at `viewport`'s current zoom — always `ROUTE_WIDTH_MULTIPLIER` times the
+ * rendered motorway width (see that constant's doc comment in `style.ts` for why it is *not* a
+ * larger multiple: a route only needs to clear the roads it is drawn over, not dominate the
+ * vehicles drawn over *it*). Exported for `busMarkerWidthPx` vs. `routeWidthPx` ratio regression
+ * testing — see `drawOverlays.test.ts`. */
+export function routeWidthPx(viewport: Viewport): number {
   const motorwayWidthPx = Math.max(ROAD_MIN_WIDTH_PX.motorway, ROAD_WIDTH_M.motorway * viewport.scale());
   return motorwayWidthPx * ROUTE_WIDTH_MULTIPLIER;
 }
@@ -380,10 +442,12 @@ function drawRubberBand(
 /** One bus per `busPositionAt` call, oriented triangle body in the "brand" color, outlined in
  * `--ink` (the same fill-plus-stroke idiom `drawStops` uses — see `BUS_STROKE_WIDTH_RATIO`'s doc
  * comment for why the outline is what actually makes the marker read against paper and roads,
- * not just the fill), plus a full-length stripe in the line's color down its centerline (SPEC,
+ * not just the fill), plus a full-length centerline stripe tinted from the line's color (SPEC,
  * `studio/GAME.md`: "Buses wear the company brand color with a full-length stripe in the line's
- * color"). Reuses `busPositionScratch` and `busMarkerScratch` across every bus, every line, every
- * frame — never allocates in this loop. */
+ * color") via `getBusStripeColor`, *not* the raw `getLineColor` the route itself is stroked in —
+ * see `BUS_STRIPE_CONTRAST_MIX_T`'s doc comment for why: identical colors is exactly what let a
+ * bus camouflage into its own route. Reuses `busPositionScratch` and `busMarkerScratch` across
+ * every bus, every line, every frame — never allocates in this loop. */
 function drawBuses(
   ctx: CanvasRenderingContext2D,
   viewport: Viewport,
@@ -400,7 +464,7 @@ function drawBuses(
 
   for (const entry of schedules) {
     if (entry.busCount <= 0) continue;
-    const stripeColor = getLineColor(palette, entry.lineId);
+    const stripeColor = getBusStripeColor(palette, entry.lineId);
 
     for (let busIndex = 0; busIndex < entry.busCount; busIndex++) {
       const pos = busPositionAt(entry.schedule, busIndex, entry.busCount, totalMinutes, busPositionScratch);

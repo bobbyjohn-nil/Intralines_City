@@ -133,19 +133,50 @@ const DIAGONAL_PARK_EXCLUSION_MARGIN_M = 70;
 const AXIS_SNAP_EPSILON_M = 1e-6;
 
 // ── Parks ────────────────────────────────────────────────────────────────────
-// Parks are sized and centred to fill most of a single block's interior, clear of the streets
-// bounding it, rather than floating free over the grid. Spec: 3–5 of them, at least one on the
-// riverbank.
+// Parks span multiple grid blocks rather than fitting inside one — a single BLOCK_SPACING_M=140m
+// block, once margined for jitter and street clearance, caps a park's diameter under ~110m, which
+// renders as a handful of pixels at the default view (a 140m block is ~9.4px there) and reads as
+// grid-line noise, not a park. Real cities run pocket parks (roughly half a block) up to a central
+// park spanning many blocks; PARK_TIER_LANDMARK/MEDIUM/SMALL below span that same range, and every
+// city gets exactly one landmark, one medium park, and the rest as pockets (spec: 3–5 total) — a
+// mix, not identically-sized blobs, and the landmark doubles as a navigable landmark players can
+// route toward rather than pure decoration.
+//
+// A landmark or medium park's footprint is bigger than a single block, so it necessarily swallows
+// the interior street grid that would otherwise run through it — exactly what a real park does to
+// a city's grid (spec: "the grid is interrupted by a park is exactly what makes a city plan look
+// designed"). Rather than merely drawing the park over those streets (leaving buses free to route
+// straight through park interior, and leaving the "park" as paint on an otherwise-ungapped street
+// map), the interior grid nodes and edges a footprint fully encloses are removed from the graph;
+// only the streets framing the footprint's outer edge survive, so the park reads as a real gap the
+// grid detours around. This can never disconnect the graph: every removed node is strictly interior
+// to a footprint (by construction, single-block SMALL footprints have none, so they carve nothing),
+// so every surviving node keeps its full complement of neighbours outside the footprint —
+// assertConnected still runs afterward as the actual guarantee, not just this argument.
 
-const PARK_MIN_COUNT = 3; // tune
+interface ParkTier {
+  readonly spanBlocks: number; // footprint is spanBlocks x spanBlocks grid cells (spanBlocks * BLOCK_SPACING_M per side)
+  readonly minRadiusM: number;
+  readonly maxRadiusM: number;
+}
+
+/** The one landmark park per city: ~3 blocks (420m) a side, diameter 280–340m. # tune */
+const PARK_TIER_LANDMARK: ParkTier = { spanBlocks: 3, minRadiusM: 140, maxRadiusM: 170 };
+/** The one mid-size park per city: 2 blocks (280m) a side, diameter 160–220m. # tune */
+const PARK_TIER_MEDIUM: ParkTier = { spanBlocks: 2, minRadiusM: 78, maxRadiusM: 108 };
+/** Every remaining park: a pocket park filling most of a single block (140m), diameter 84–104m —
+ * modest on its own, but the landmark and medium tiers above mean it's never the biggest green
+ * space on the map the way every park used to be. # tune */
+const PARK_TIER_SMALL: ParkTier = { spanBlocks: 1, minRadiusM: 42, maxRadiusM: 52 };
+
+const PARK_MIN_COUNT = 3; // tune — spec: 3-5, always one landmark + one medium + pockets
 const PARK_MAX_COUNT = 5; // tune
-const PARK_MIN_RADIUS_M = 38; // tune
-const PARK_MAX_RADIUS_M = 50; // tune
 const PARK_SIDES = 9; // tune — vertices per park, for a rounded, non-rectangular blob
 const PARK_RADIUS_JITTER = 0.15; // tune — fractional +/- per vertex; small enough that even the
-// largest jittered vertex (PARK_MAX_RADIUS_M * (1 + PARK_RADIUS_JITTER)) plus PARK_STREET_MARGIN_M
-// stays inside half a block, so a park can never reach the streets bounding its cell
-const PARK_STREET_MARGIN_M = 10; // tune — clearance kept from the block's bounding streets
+// largest jittered vertex (tier.maxRadiusM * (1 + PARK_RADIUS_JITTER)) plus PARK_STREET_MARGIN_M
+// stays inside half of the tier's footprint span, so a park can never reach the streets framing it:
+// landmark 170*1.15+10=205.5 < 210; medium 108*1.15+10=134.2 < 140; small 52*1.15+10=69.8 < 70.
+const PARK_STREET_MARGIN_M = 10; // tune — clearance kept from the footprint's bounding streets
 
 // ── Zones ────────────────────────────────────────────────────────────────────
 // Riverton's census-block-group equivalent: a Voronoi diagram over a jittered lattice of sites.
@@ -587,15 +618,45 @@ interface Cell {
   readonly j: number;
 }
 
-function cellCenterM(cell: Cell, axis: readonly number[]): { readonly x: number; readonly y: number } {
+/** A park's footprint: a spanBlocks x spanBlocks square of grid cells, corners at grid lines
+ * (iStart, jStart) through (iStart + spanBlocks, jStart + spanBlocks). */
+interface ParkFootprint {
+  readonly iStart: number;
+  readonly jStart: number;
+  readonly spanBlocks: number;
+}
+
+function cellKey(cell: Cell): string {
+  return `${cell.i},${cell.j}`;
+}
+
+function footprintCells(fp: ParkFootprint): Cell[] {
+  const cells: Cell[] = [];
+  for (let di = 0; di < fp.spanBlocks; di++) {
+    for (let dj = 0; dj < fp.spanBlocks; dj++) cells.push({ i: fp.iStart + di, j: fp.jStart + dj });
+  }
+  return cells;
+}
+
+function footprintCenterM(fp: ParkFootprint, axis: readonly number[]): { readonly x: number; readonly y: number } {
   return {
-    x: (at(axis, cell.i) + at(axis, cell.i + 1)) / 2,
-    y: (at(axis, cell.j) + at(axis, cell.j + 1)) / 2,
+    x: (at(axis, fp.iStart) + at(axis, fp.iStart + fp.spanBlocks)) / 2,
+    y: (at(axis, fp.jStart) + at(axis, fp.jStart + fp.spanBlocks)) / 2,
   };
 }
 
+/** True if `fp` touches the row of cells immediately alongside either riverbank (never the
+ * water/embankment band cell itself — isFootprintValid already excludes that). Only a single-block
+ * footprint can actually satisfy this, since the riverside band is one cell wide. */
+function footprintIsRiverside(fp: ParkFootprint): boolean {
+  const jEnd = fp.jStart + fp.spanBlocks - 1;
+  const southBankRow = RIVER_ROW_SOUTH - 1;
+  return (fp.jStart <= southBankRow && jEnd >= southBankRow) || (fp.jStart <= RIVER_ROW_NORTH && jEnd >= RIVER_ROW_NORTH);
+}
+
 function isInDiagonalBoundingBox(cell: Cell, axis: readonly number[]): boolean {
-  const { x, y } = cellCenterM(cell, axis);
+  const x = (at(axis, cell.i) + at(axis, cell.i + 1)) / 2;
+  const y = (at(axis, cell.j) + at(axis, cell.j + 1)) / 2;
   const xStart = at(axis, CENTER_LINE - DIAGONAL_HALF_SPAN_COLUMNS) - DIAGONAL_PARK_EXCLUSION_MARGIN_M;
   const xEnd = at(axis, CENTER_LINE + DIAGONAL_HALF_SPAN_COLUMNS) + DIAGONAL_PARK_EXCLUSION_MARGIN_M;
   const yLo = Math.min(DIAGONAL_START_ROW_OFFSET, DIAGONAL_END_ROW_OFFSET) * BLOCK_SPACING_M - DIAGONAL_PARK_EXCLUSION_MARGIN_M;
@@ -603,10 +664,33 @@ function isInDiagonalBoundingBox(cell: Cell, axis: readonly number[]): boolean {
   return x >= xStart && x <= xEnd && y >= yLo && y <= yHi;
 }
 
-/** Rounded, non-rectangular park polygon centred on `centerM`, sized to sit inside a single
- * block's interior with PARK_STREET_MARGIN_M to spare — never touches the streets around it. */
-function generateParkPolygon(rng: Rng, centerM: { readonly x: number; readonly y: number }): Polygon {
-  const baseRadius = rng.range(PARK_MIN_RADIUS_M, PARK_MAX_RADIUS_M);
+/** A footprint is buildable if it's fully on-grid, never touches the water/embankment band cell,
+ * clears the diagonal avenue's exclusion box (checked cell-by-cell, so a multi-block footprint
+ * can't clip a corner of the box even with its centre clear), and doesn't overlap ground another
+ * park already claimed. */
+function isFootprintValid(fp: ParkFootprint, axis: readonly number[], occupied: ReadonlySet<string>): boolean {
+  if (fp.iStart < 0 || fp.iStart + fp.spanBlocks > GRID_LINE_COUNT - 1) return false;
+  if (fp.jStart < 0 || fp.jStart + fp.spanBlocks > GRID_LINE_COUNT - 1) return false;
+  for (let dj = 0; dj < fp.spanBlocks; dj++) {
+    if (fp.jStart + dj === RIVER_ROW_SOUTH) return false; // the water/embankment band itself
+  }
+  for (const cell of footprintCells(fp)) {
+    if (isInDiagonalBoundingBox(cell, axis)) return false;
+    if (occupied.has(cellKey(cell))) return false;
+  }
+  return true;
+}
+
+function parkTierForSpan(spanBlocks: number): ParkTier {
+  if (spanBlocks === PARK_TIER_LANDMARK.spanBlocks) return PARK_TIER_LANDMARK;
+  if (spanBlocks === PARK_TIER_MEDIUM.spanBlocks) return PARK_TIER_MEDIUM;
+  return PARK_TIER_SMALL;
+}
+
+/** Rounded, non-rectangular park polygon centred on `centerM`, sized to sit inside its footprint's
+ * interior with PARK_STREET_MARGIN_M to spare — never touches the streets framing it. */
+function generateParkPolygon(rng: Rng, centerM: { readonly x: number; readonly y: number }, tier: ParkTier): Polygon {
+  const baseRadius = rng.range(tier.minRadiusM, tier.maxRadiusM);
   const points: LngLat[] = [];
   for (let s = 0; s < PARK_SIDES; s++) {
     const angle = (s / PARK_SIDES) * Math.PI * 2;
@@ -627,35 +711,67 @@ function shuffleInPlace<T>(rng: Rng, items: T[]): void {
   }
 }
 
-function drawParks(rng: Rng, axis: readonly number[]): Polygon[] {
-  const riverside: Cell[] = [];
-  const general: Cell[] = [];
+/** Picks the park footprints: one PARK_TIER_LANDMARK, one PARK_TIER_MEDIUM, then
+ * (count - 2) PARK_TIER_SMALL pockets. Landmark and medium are placed first so they get first pick
+ * of the grid while it's least constrained; the first pocket park is steered onto the riverbank
+ * (spec: at least one park on the river) since a single-block footprint is the only tier narrow
+ * enough to fit the one-cell-wide riverside band without also failing the water-band exclusion. */
+function drawParks(rng: Rng, axis: readonly number[]): { readonly polygons: Polygon[]; readonly footprints: ParkFootprint[] } {
+  const occupied = new Set<string>();
+  const footprints: ParkFootprint[] = [];
 
-  for (let i = 0; i < GRID_LINE_COUNT - 1; i++) {
-    for (let j = 0; j < GRID_LINE_COUNT - 1; j++) {
-      const cell: Cell = { i, j };
-      if (j === RIVER_ROW_SOUTH) continue; // the water/embankment band itself — never a park
-      if (isInDiagonalBoundingBox(cell, axis)) continue;
-      if (j === RIVER_ROW_SOUTH - 1 || j === RIVER_ROW_NORTH) riverside.push(cell);
-      else general.push(cell);
+  function candidatesFor(spanBlocks: number): ParkFootprint[] {
+    const list: ParkFootprint[] = [];
+    for (let iStart = 0; iStart <= GRID_LINE_COUNT - 1 - spanBlocks; iStart++) {
+      for (let jStart = 0; jStart <= GRID_LINE_COUNT - 1 - spanBlocks; jStart++) {
+        const fp: ParkFootprint = { iStart, jStart, spanBlocks };
+        if (isFootprintValid(fp, axis, occupied)) list.push(fp);
+      }
     }
+    return list;
   }
 
-  shuffleInPlace(rng, riverside);
-  shuffleInPlace(rng, general);
+  function place(spanBlocks: number, preferRiverside: boolean): void {
+    const pool = candidatesFor(spanBlocks);
+    if (pool.length === 0) {
+      throw new Error(`generateRiverton: no valid ${spanBlocks}-block park footprint left to place`);
+    }
+    const riverside = preferRiverside ? pool.filter(footprintIsRiverside) : [];
+    const chosenFrom = riverside.length > 0 ? riverside : pool;
+    shuffleInPlace(rng, chosenFrom);
+    const fp = at(chosenFrom, 0);
+    for (const cell of footprintCells(fp)) occupied.add(cellKey(cell));
+    footprints.push(fp);
+  }
 
   const count = rng.int(PARK_MIN_COUNT, PARK_MAX_COUNT);
-  const cells: Cell[] = [];
-  if (riverside.length > 0) cells.push(at(riverside, 0)); // spec: at least one park on the riverbank
-  for (const cell of general) {
-    if (cells.length >= count) break;
-    cells.push(cell);
-  }
-  // Fall back to remaining riverside cells if the general pool somehow ran out (shouldn't, at
-  // this grid size, but never silently ship fewer parks than the count promised).
-  for (let k = 1; k < riverside.length && cells.length < count; k++) cells.push(at(riverside, k));
+  place(PARK_TIER_LANDMARK.spanBlocks, false);
+  place(PARK_TIER_MEDIUM.spanBlocks, false);
+  for (let k = 0; k < count - 2; k++) place(PARK_TIER_SMALL.spanBlocks, k === 0);
 
-  return cells.map((cell) => generateParkPolygon(rng, cellCenterM(cell, axis)));
+  const polygons = footprints.map((fp) => generateParkPolygon(rng, footprintCenterM(fp, axis), parkTierForSpan(fp.spanBlocks)));
+  return { polygons, footprints };
+}
+
+/** Removes the street grid strictly inside every park footprint — every grid node not on the
+ * footprint's own framing edge, plus every edge touching one — so a landmark or medium park
+ * occupies a real gap the grid detours around rather than streets simply drawn over. A single-block
+ * SMALL footprint has no such interior node (its whole area is bounded by the block's own four
+ * corners), so it carves nothing. Mutates `removedEdgeIds` (shared with the diagonal-avenue and
+ * bridge cuts already applied) and returns the node ids to drop from the graph. */
+function carveParksIntoGrid(footprints: readonly ParkFootprint[], grid: BaseGrid, removedEdgeIds: Set<number>): Set<number> {
+  const removedNodeIds = new Set<number>();
+  for (const fp of footprints) {
+    for (let i = fp.iStart + 1; i <= fp.iStart + fp.spanBlocks - 1; i++) {
+      for (let j = fp.jStart + 1; j <= fp.jStart + fp.spanBlocks - 1; j++) {
+        removedNodeIds.add(nodeId(i, j));
+      }
+    }
+  }
+  for (const edge of grid.edges) {
+    if (removedNodeIds.has(edge.from) || removedNodeIds.has(edge.to)) removedEdgeIds.add(edge.id);
+  }
+  return removedNodeIds;
 }
 
 // ── Zones ────────────────────────────────────────────────────────────────────
@@ -971,12 +1087,18 @@ export function generateRiverton(seed: number): City {
   const bridgeColumns = chooseBridgeColumns(rng);
   cutRiverCrossings(grid, bridgeColumns, idGen, removedEdgeIds);
 
+  // Parks are picked (and their RNG draws consumed) here, in the documented order — but unlike
+  // water or zones, a landmark/medium park can remove street geometry (see carveParksIntoGrid
+  // above), so that has to happen before the graph below is finalised and connectivity is checked.
+  const { polygons: parks, footprints: parkFootprints } = drawParks(rng, axis);
+  const removedNodeIds = carveParksIntoGrid(parkFootprints, grid, removedEdgeIds);
+
+  const finalNodes = grid.nodes.filter((node) => !removedNodeIds.has(node.id));
   const finalEdges = grid.edges.filter((edge) => !removedEdgeIds.has(edge.id));
-  const graph: StreetGraph = { nodes: grid.nodes, edges: finalEdges, adjacency: buildAdjacency(grid.nodes, finalEdges) };
+  const graph: StreetGraph = { nodes: finalNodes, edges: finalEdges, adjacency: buildAdjacency(finalNodes, finalEdges) };
   assertConnected(graph);
 
   const water = [buildRiverPolygon(riverAmplitude, riverPhase, grid.halfExtentM)];
-  const parks = drawParks(rng, axis);
 
   const zones = buildZones(rng, grid.halfExtentM);
   assertDepotSitingViable(zones, graph);

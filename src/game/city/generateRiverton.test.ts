@@ -58,6 +58,34 @@ function haversineMeters(a: LngLat, b: LngLat): number {
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
+/** A park's on-the-ground diameter: the greatest great-circle distance between any two of its
+ * vertices. Cheap at PARK_SIDES=9 vertices and exact enough to tell a landmark park from a pocket
+ * park without importing the generator's own tier constants. */
+function polygonDiameterM(poly: Polygon): number {
+  let maxD = 0;
+  for (let i = 0; i < poly.length; i++) {
+    for (let j = i + 1; j < poly.length; j++) {
+      const d = haversineMeters(poly[i]!, poly[j]!);
+      if (d > maxD) maxD = d;
+    }
+  }
+  return maxD;
+}
+
+/** Standard ray-casting point-in-polygon test, used below to confirm a big park's footprint has
+ * had its interior streets actually removed rather than just being drawn over the top of them. */
+function pointInPolygon(point: LngLat, poly: Polygon): boolean {
+  const [px, py] = point;
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i]!;
+    const [xj, yj] = poly[j]!;
+    const intersects = yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi;
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
 describe('generateRiverton', () => {
   it('is deterministic: the same seed produces a byte-identical city', () => {
     const a = generateRiverton(RIVERTON_SEED);
@@ -304,6 +332,70 @@ describe('generateRiverton', () => {
         const from = nodeById.get(edge.from)!.pos;
         const to = nodeById.get(edge.to)!.pos;
         expect(crossingCount(from, to, park)).toBe(0);
+      }
+    }
+  });
+
+  // A park should be recognisable as a park at the default view (a 140m block renders as ~9.4px
+  // there), so parks now span blocks rather than fitting inside one: a single landmark park
+  // (~3 blocks, 420m, on the order of a real city's central park), a single medium park (~2
+  // blocks, 280m), and every remaining park a pocket that still fills most of one block (140m) —
+  // a mix, not identically-sized blobs. `drawParks` places the landmark first, then the medium,
+  // then the pockets, so `city.scenery.parks` preserves that order.
+  it('places a landmark park, a medium park, and pocket parks — a mix, not identical blobs', () => {
+    const city = generateRiverton(RIVERTON_SEED);
+    const diameters = city.scenery.parks.map(polygonDiameterM);
+    expect(diameters.length).toBeGreaterThanOrEqual(3);
+
+    const [landmark, medium, ...pockets] = diameters;
+
+    // Landmark: a 420m-square footprint, ±15% per-vertex jitter — worst-case diameter range.
+    expect(landmark!).toBeGreaterThan(230);
+    expect(landmark!).toBeLessThan(400);
+
+    // Medium: a 280m-square footprint.
+    expect(medium!).toBeGreaterThan(125);
+    expect(medium!).toBeLessThan(255);
+
+    // Pockets: a 140m-square footprint (a normal city block) — visibly bigger than the old
+    // single-tier park (76-100m diameter) but well short of the medium tier.
+    expect(pockets.length).toBeGreaterThan(0);
+    for (const d of pockets) {
+      expect(d).toBeGreaterThan(65);
+      expect(d).toBeLessThan(125);
+    }
+
+    // The tiers read as a real size hierarchy, not overlapping noise.
+    expect(landmark!).toBeGreaterThan(medium!);
+    for (const d of pockets) expect(medium!).toBeGreaterThan(d);
+  });
+
+  it('keeps every park inside city.bounds', () => {
+    const city = generateRiverton(RIVERTON_SEED);
+    for (const park of city.scenery.parks) {
+      for (const [lng, lat] of park) {
+        expect(lng).toBeGreaterThanOrEqual(city.bounds.west);
+        expect(lng).toBeLessThanOrEqual(city.bounds.east);
+        expect(lat).toBeGreaterThanOrEqual(city.bounds.south);
+        expect(lat).toBeLessThanOrEqual(city.bounds.north);
+      }
+    }
+  });
+
+  // A landmark/medium park's footprint is bigger than a single block, so it necessarily swallows
+  // some interior street grid. The generator's chosen behaviour: that interior grid is actually
+  // removed (nodes and edges alike), leaving only the streets framing the park's outer edge — not
+  // just a park polygon painted over streets that are still there underneath. This is what keeps
+  // "places 3-5 parks that never overlap street geometry" above true for the bigger tiers too.
+  it('removes the interior street grid under the landmark and medium parks (the grid detours around them, it is not drawn over)', () => {
+    const city = generateRiverton(RIVERTON_SEED);
+    const [landmark, medium] = city.scenery.parks;
+    expect(landmark).toBeDefined();
+    expect(medium).toBeDefined();
+
+    for (const park of [landmark!, medium!]) {
+      for (const node of city.graph.nodes) {
+        expect(pointInPolygon(node.pos, park)).toBe(false);
       }
     }
   });
