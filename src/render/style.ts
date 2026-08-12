@@ -176,11 +176,12 @@ export const LINE_COLOR_MIX_STOPS: ReadonlyArray<readonly [PaletteColorKey, Pale
  * cycling color no road ever uses (`LINE_COLOR_MIX_STOPS`), so width only has to clear the roads it
  * sits over, not dominate the vehicles that sit over *it*. 1.25 still clears every road class's
  * floor by a wide margin (1.52x trunk, the next-heaviest class, up to 1.89x primary) while giving
- * the floor-dominated route width of ~6.25px a 1.6x ratio against the 10px bus marker floor — see
- * `drawOverlays.test.ts`'s `routeWidthPx` vs. `busMarkerWidthPx` regression for the measured ratio
- * across the zoom range this actually matters at. Above that zoom range, a route's true-scale width
- * can still be narrower than a bus is wide relative to it (a real motorway genuinely is many times
- * a bus's width up close) — that is correct cartography at street-level zoom, not this defect, and
+ * the floor-dominated route width of ~6.25px a 2.88x ratio against the 18px bus marker width floor
+ * (`BUS_MARKER_WIDTH_MIN_PX`) — see `drawOverlays.test.ts`'s `routeWidthPx` vs. `busMarkerWidthPx`
+ * regression for the measured ratio across the zoom range this actually matters at. Above that
+ * zoom range, a route's true-scale width can still be narrower than a bus is wide relative to it
+ * (a real motorway genuinely is many times a bus's width up close) — that is correct cartography
+ * at street-level zoom, not this defect, and
  * is not what this constant is tuned against. TUNE
  */
 export const ROUTE_WIDTH_MULTIPLIER = 1.25;
@@ -218,21 +219,50 @@ export const BUS_WIDTH_M = 2.6;
 /**
  * Bus marker length (nose-to-tail) clamps between these two screen-pixel bounds, same
  * "true-metres scaled, then clamped" idiom as `stopRadiusPx`. The floor is the number that
- * matters most: at typical play zooms (including the default fit-to-bounds view of a whole city)
- * `BUS_LENGTH_M * viewport.scale()` is sub-pixel, so the floor is what actually renders — it is
- * set well above `STOP_RADIUS_MAX_PX * 2` (12px, the largest a stop marker can ever get) so a bus
- * reads as unmistakably bigger than a stop at *every* zoom, not just the one this was tuned
- * against. The ceiling keeps it from becoming a blob once zoomed in far enough for the true-scale
- * size to exceed it. TUNE
+ * matters most: at typical play zooms (including the default fit-to-bounds view of a whole city,
+ * measured at zoom 14.955) `BUS_LENGTH_M * viewport.scale()` is ~2.3px, so the floor is what
+ * actually renders.
+ *
+ * Sixth playtest fix. The previous floor (18px) was sized only to beat the stop marker's ceiling
+ * (`STOP_RADIUS_MAX_PX * 2` = 12px) — a real constraint, but not the one that matters in a transit
+ * game: "is a bus technically bigger than a stop" is not the same question as "does a player
+ * notice their vehicle at the zoom they plan at". The verdict named the marker a "fleck" even
+ * though it passed every one of the earlier size/contrast/stroke regressions.
+ *
+ * 30px is chosen against two references a player actually reads the map by, not against the
+ * stop marker: at the default zoom (14.955), a 140m city block renders at ~27.1px — the floor is
+ * set to *slightly exceed one block* (30 / 27.1 ≈ 1.11x), so a bus reads as an object at the same
+ * visual scale as the city grid itself, deliberately larger than its true 12m size (a ~13x
+ * exaggeration at this zoom) the way a transit game draws its vehicles, not a mapping app drawing
+ * true-to-scale geometry. Against the route it rides on (`routeWidthPx`, 6.25px at this zoom) the
+ * ratio is 4.8x — see `ROUTE_WIDTH_MULTIPLIER`'s doc comment for why the route itself is kept
+ * comparatively restrained. The ceiling (2x the floor, the same floor:ceiling ratio the previous
+ * 18/36 pair used) keeps it from becoming a blob once zoomed in far enough for the true-scale size
+ * to exceed it — see `busMarkerLengthPx`'s crossover math in `drawOverlays.test.ts` for exactly
+ * where that handoff lands (~zoom 18.6, well into street-level zoom, ~3.7 zoom levels above the
+ * default). TUNE
  */
-export const BUS_MARKER_LENGTH_MIN_PX = 18;
-export const BUS_MARKER_LENGTH_MAX_PX = 36;
+export const BUS_MARKER_LENGTH_MIN_PX = 30;
+export const BUS_MARKER_LENGTH_MAX_PX = 60;
 
-/** Bus marker width clamps, same idiom as `BUS_MARKER_LENGTH_MIN_PX` / `_MAX_PX` above — held at
- * the same min:max ratio (5:9) as the length bounds so the marker's proportions (and therefore
- * its "pointed triangle", not "blob", read) stay constant across the whole zoom range. TUNE */
-export const BUS_MARKER_WIDTH_MIN_PX = 10;
-export const BUS_MARKER_WIDTH_MAX_PX = 20;
+/**
+ * Bus marker width clamps, same idiom as `BUS_MARKER_LENGTH_MIN_PX` / `_MAX_PX` above.
+ *
+ * Not derived from the length floor by a fixed aspect ratio this time — it is sized directly
+ * against `routeWidthPx`, because that is the comparison that actually broke in the sixth
+ * playtest's underlying bug report: `ROAD_MIN_WIDTH_PX.motorway` (hence `routeWidthPx`) stops
+ * being floor-governed and starts growing with true motorway scale at zoom ≈15.185, just 0.23
+ * zoom levels above the real default zoom (14.955) — see `drawOverlays.test.ts`'s
+ * `TYPICAL_PLAY_ZOOMS` comment for the full regression this constant now has to survive. Past that
+ * crossover the route keeps growing while the bus (still floor-governed) does not, so the "bus
+ * clearly wider than its route" guarantee is only as strong as how far past that crossover the
+ * width floor keeps winning. 18px keeps the ratio above `MIN_BUS_TO_ROUTE_WIDTH_RATIO` (1.5) until
+ * zoom ≈16.13 — about 1.2 zoom levels of headroom past the *default* zoom, roughly five times the
+ * previous margin — while still comparing sensibly to the length floor (18/30 ≈ 0.6, a visibly
+ * elongated triangle, not a stub). TUNE
+ */
+export const BUS_MARKER_WIDTH_MIN_PX = 18;
+export const BUS_MARKER_WIDTH_MAX_PX = 36;
 
 /**
  * Blend factor from `--muted` (0) to `--amber` (1) for the bus "company brand color" (per
@@ -298,8 +328,8 @@ export const BUS_STRIPE_CONTRAST_MIX_T = 0.5;
  * visually heavy when the marker is at its `_MAX_PX` ceiling and disappearing to a hairline (or
  * over-dominating a tiny triangle) when it's at its `_MIN_PX` floor. Deriving it from `widthPx`
  * instead means it inherits the same clamp-then-scale response for free. At the width floor
- * (`BUS_MARKER_WIDTH_MIN_PX`, 10px) this is 2px; at the ceiling (`BUS_MARKER_WIDTH_MAX_PX`, 20px)
- * it's 4px — always a clearly visible ring around the fill, following `drawStops`'s established
+ * (`BUS_MARKER_WIDTH_MIN_PX`, 18px) this is 3.6px; at the ceiling (`BUS_MARKER_WIDTH_MAX_PX`, 36px)
+ * it's 7.2px — always a clearly visible ring around the fill, following `drawStops`'s established
  * fill-plus-stroke idiom (`STOP_OUTLINE_WIDTH_PX`) rather than inventing a new treatment; stroked in
  * `--ink`, same color `drawStops` already strokes with. TUNE
  */

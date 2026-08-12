@@ -202,6 +202,40 @@ describe('busMarkerLengthPx / busMarkerWidthPx', () => {
     'largest a stop marker can ever get, guaranteeing the ordering holds at every zoom', () => {
     expect(BUS_MARKER_LENGTH_MIN_PX).toBeGreaterThan(STOP_RADIUS_MAX_PX * 2);
   });
+
+  describe('the floor governs at planning zoom; true scale takes over only at street level, not before', () => {
+    // The real default zoom (see `TYPICAL_PLAY_ZOOMS`'s comment further down for why 14.955, not a
+    // synthetic viewport's own fit) and a couple of representative "the player zoomed in a bit"
+    // steps from it — the floor must still be what renders at every one of these, or the exaggerated
+    // "larger than scale, deliberately" size this task asked for silently stops applying right where
+    // it matters most.
+    const PLANNING_ZOOMS = [14.955, 16, 18];
+
+    it('renders at exactly the floor (not a shrunk true-scale value) at planning zoom', () => {
+      for (const zoom of PLANNING_ZOOMS) {
+        expect(busMarkerLengthPx(viewportAtZoom(zoom))).toBeCloseTo(BUS_MARKER_LENGTH_MIN_PX, 6);
+        expect(busMarkerWidthPx(viewportAtZoom(zoom))).toBeCloseTo(BUS_MARKER_WIDTH_MIN_PX, 6);
+      }
+    });
+
+    // Confirms the other half of the requirement: zoomed in far enough to be street level (not just
+    // "one notch past the default"), the marker is no longer pinned to the planning-zoom floor —
+    // true scale has taken over (and the ceiling has already reined it back in), so a bus does not
+    // stay a fixed-size sticker all the way to the closest zoom the game allows.
+    it('has moved off the floor by street-level zoom — the crossover actually happens, it is not ' +
+      'just a number in a comment', () => {
+      // Past both the length crossover (~18.6) and the width crossover (~20.1) — see
+      // `BUS_MARKER_WIDTH_MIN_PX`'s and `BUS_MARKER_LENGTH_MIN_PX`'s doc comments in `style.ts`.
+      const streetLevelZoom = 21.5;
+      expect(busMarkerLengthPx(viewportAtZoom(streetLevelZoom))).toBeGreaterThan(BUS_MARKER_LENGTH_MIN_PX);
+      expect(busMarkerWidthPx(viewportAtZoom(streetLevelZoom))).toBeGreaterThan(BUS_MARKER_WIDTH_MIN_PX);
+      // ...but is still bounded by the ceiling, not the ~307px an uncapped true-scale render would
+      // produce this close to MAX_ZOOM — this is the "does not become a bus-shaped billboard" half
+      // of the requirement.
+      expect(busMarkerLengthPx(viewportAtZoom(streetLevelZoom))).toBeLessThanOrEqual(BUS_MARKER_LENGTH_MAX_PX);
+      expect(busMarkerWidthPx(viewportAtZoom(streetLevelZoom))).toBeLessThanOrEqual(BUS_MARKER_WIDTH_MAX_PX);
+    });
+  });
 });
 
 describe('busStrokeWidthPx', () => {
@@ -246,19 +280,39 @@ describe('busStrokeWidthPx', () => {
 describe('routeWidthPx vs. busMarkerWidthPx (regression: "bus optically merged into its own route ' +
   'line" — the route stroke was nearly as wide as the bus riding on it at the zoom range most play ' +
   'happens in, so the vehicle read as a notch on the line, not a distinct object)', () => {
-  // Exactly the zoom range the playtest diagnosis names: the floor-dominated regime, where
-  // `routeWidthPx` is pinned to `ROAD_MIN_WIDTH_PX.motorway` (not yet growing with true-scale
-  // width) and `busMarkerWidthPx` is pinned to `BUS_MARKER_WIDTH_MIN_PX` — this covers the default
-  // fit-to-bounds view of a whole city and everything zoomed further out from it, i.e. the state
-  // most of a play session is actually in. Above this range a route's *true-scale* width can
-  // legitimately exceed a bus's (a real motorway genuinely is many times a bus's width up close) —
-  // that is correct cartography at street-level zoom, not this defect, so this regression is
-  // deliberately scoped to where the bug actually manifested rather than the full zoom range.
-  const TYPICAL_PLAY_ZOOMS = [MIN_ZOOM, MIN_ZOOM + 2, 8, 10, 12, 14];
-  // Chosen below the *measured* ratio at the fix (1.6, see the render task's numeric defense) with
-  // headroom for a future palette/constant tweak, but far above the pre-fix measured ratio (1.18)
-  // — a regression back toward "barely bigger" fails loudly instead of by eye.
+  // The real default zoom the game actually opens on (a whole-city `fitToBounds` view), per the
+  // sixth playtest's exact numbers — *not* the ~13.16 a synthetic small test viewport happens to
+  // fit to below. `ROAD_MIN_WIDTH_PX.motorway` stops governing `routeWidthPx` at zoom ≈15.185 (the
+  // point where `ROAD_WIDTH_M.motorway * scale` first exceeds its own legibility floor), which is
+  // only 0.23 zoom levels above this — close enough that the previous `TYPICAL_PLAY_ZOOMS` array
+  // (which stopped at 14) never actually exercised the zoom a player opens the game at, let alone
+  // the crossover just past it. Every test below now runs against this number directly, not just a
+  // discrete sample that happened to land under it.
+  const REAL_DEFAULT_ZOOM = 14.955;
+  // Exactly the zoom range the playtest diagnosis names, extended past `REAL_DEFAULT_ZOOM` and the
+  // ≈15.185 route-floor crossover so a future constant tweak that shifts either number cannot slip
+  // through on a gap between sample points the way the old array (topping out at 14) did. 15.955 is
+  // one full zoom level in from the default — the first "zoom in one notch" a player takes — and is
+  // itself past the crossover, so it also stands in for "zoomed in a little from default", not just
+  // "exactly at default". Above this range a route's *true-scale* width can legitimately exceed a
+  // bus's (a real motorway genuinely is many times a bus's width up close) — that is correct
+  // cartography at street-level zoom, not this defect, so this regression is deliberately scoped to
+  // where the bug actually manifested rather than the full zoom range.
+  const TYPICAL_PLAY_ZOOMS = [MIN_ZOOM, MIN_ZOOM + 2, 8, 10, 12, 14, REAL_DEFAULT_ZOOM, 15.955];
+  // Chosen below the *measured* ratio at the fix (2.88x at the default zoom, see
+  // `BUS_MARKER_WIDTH_MIN_PX`'s doc comment in `style.ts`) with headroom for a future palette/
+  // constant tweak, but far above the pre-fix measured ratio (1.18) — a regression back toward
+  // "barely bigger" fails loudly instead of by eye.
   const MIN_BUS_TO_ROUTE_WIDTH_RATIO = 1.5;
+  // How far past `REAL_DEFAULT_ZOOM` the ratio must still hold above `MIN_BUS_TO_ROUTE_WIDTH_RATIO`
+  // — the exact continuous guarantee the sixth playtest's diagnosis asked for ("a change to
+  // `REFERENCE_PIXELS_PER_METER`, `ROAD_WIDTH_M.motorway` or `ROAD_MIN_WIDTH_PX.motorway` could
+  // push the crossover below the default and silently reintroduce the camouflage bug while every
+  // test stays green"). A discrete sample list can always be defeated by a constant change that
+  // moves the failure point into the gap between two sample zooms; this margin check instead scans
+  // continuously from the default zoom and cannot be fooled that way.
+  const MIN_ZOOM_MARGIN_PAST_DEFAULT = 0.5;
+  const MARGIN_SCAN_STEP = 0.01;
 
   it('the bus marker is unambiguously wider than the route it rides on, across typical play zooms', () => {
     for (const zoom of TYPICAL_PLAY_ZOOMS) {
@@ -273,6 +327,16 @@ describe('routeWidthPx vs. busMarkerWidthPx (regression: "bus optically merged i
     const viewport = Viewport.fitToBounds({ west: -71.2, east: -71.0, south: 42.3, north: 42.4 }, 1000, 700);
     const ratio = busMarkerWidthPx(viewport) / routeWidthPx(viewport);
     expect(ratio).toBeGreaterThan(MIN_BUS_TO_ROUTE_WIDTH_RATIO);
+  });
+
+  it('holds continuously (not just at sampled points) for at least ' +
+    `${MIN_ZOOM_MARGIN_PAST_DEFAULT} zoom levels past the real default zoom — regression guard for ` +
+    'a crossover shift silently reintroducing the camouflage bug between two discrete test zooms', () => {
+    for (let zoom = REAL_DEFAULT_ZOOM; zoom <= REAL_DEFAULT_ZOOM + MIN_ZOOM_MARGIN_PAST_DEFAULT; zoom += MARGIN_SCAN_STEP) {
+      const viewport = viewportAtZoom(zoom);
+      const ratio = busMarkerWidthPx(viewport) / routeWidthPx(viewport);
+      expect(ratio).toBeGreaterThan(MIN_BUS_TO_ROUTE_WIDTH_RATIO);
+    }
   });
 });
 
