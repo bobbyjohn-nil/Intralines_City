@@ -163,6 +163,29 @@ we have no measurement yet, and rewriting on a guess is how weeks disappear.
 - Map tints with time of day; buses run headlights and lit windows at night.
 - Buses wear the company brand color with a full-length stripe in the line's color.
 
+## Feel target — Subway Builder (set 2026-08-12)
+
+**Sleek and modern, but usable.** That is the bar: the interface should feel like a contemporary
+transit-planning tool, not a retro tycoon game, and never at the cost of being able to read it.
+
+**This pulls against the manual's stated identity, and the tension is real.** The manual specifies a
+warm paper palette, hand-drawn stroke icons and "no emoji in chrome" — a deliberately analogue,
+drafting-table look. "Sleek and modern" is not the same instinct. Both are defensible; blending them
+carelessly produces something that reads as neither.
+
+Where they agree, and this is most of it: restraint, generous space, type carrying the hierarchy,
+data legibility over decoration, and no ornament that is not doing work. The existing spacing scale,
+40 px hit targets and light visual weight all serve both.
+
+Where they diverge, and what needs an explicit call: the palette's warmth, the hand-drawn stroke
+treatment, and how literal the map's cartography should be. **Do not resolve this by guessing.**
+
+**Before any work in this direction:** put real Subway Builder screenshots in
+[studio/reference/screenshots/](../reference/README.md) and route them to `reference-analyst`, which
+measures palette, contrast hierarchy, camera framing, UI density and type scale rather than working
+from an impression. Implementing from a description is how a copy ends up resembling the reference
+in words and nothing like it on screen.
+
 ## Audio
 
 **None described in the manual.** Either the game is silent or audio is undocumented — confirm before
