@@ -94,6 +94,23 @@ export function withAlpha(hex: string, alpha: number): string {
 }
 
 /**
+ * Linearly blends two palette hex colors (`t=0` is `fromHex`, `t=1` is `toHex`, same as `mixHex`)
+ * and applies alpha in the same step, returning a ready-to-use `rgba(...)` string. Exists because
+ * `mixHex` returns `rgb(...)` (not a hex string), which `withAlpha` cannot parse — chaining
+ * `withAlpha(mixHex(...), alpha)` silently breaks on the `rgb(...)` prefix. Both inputs stay plain
+ * hex palette colors, so this composes with the same "never an invented hex" rule as `mixHex` and
+ * `withAlpha`.
+ */
+export function mixHexAlpha(fromHex: string, toHex: string, t: number, alpha: number): string {
+  const [r0, g0, b0] = hexToRgb(fromHex);
+  const [r1, g1, b1] = hexToRgb(toHex);
+  const r = Math.round(r0 + (r1 - r0) * t);
+  const g = Math.round(g0 + (g1 - g0) * t);
+  const b = Math.round(b0 + (b1 - b0) * t);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+/**
  * Forces the next `readPaperPalette()` call to fully re-derive from live CSS, discarding the
  * cached raw-string comparison — call this whenever something *outside* a normal render call
  * might have changed the palette (a theme flip), so the next read can't short-circuit on a stale

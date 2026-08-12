@@ -36,4 +36,28 @@
      buttons), so anything anchored below it — the notice — can never drift out of sync with a
      hand-tuned guess. */
   --ui-topbar-height: calc(var(--ui-hit-target) + var(--space-3) * 2 + 1px);
+
+  /* The dock's rendered height, same shape as --ui-topbar-height (its own vertical padding plus
+     one hit-target row plus its 1px border). The dock is fixed-positioned and out of normal flow
+     (see Dock.css) so the map never resizes when it mounts or unmounts; this constant is what lets
+     the map (App.css) reserve exactly the dock's footprint instead of guessing a pixel value. If
+     Dock.css ever grows a second row (e.g. icon + label wrapping past the hit target), bump this
+     alongside it — verify by eye, this is not measured from a render.
+  */
+  --ui-dock-height: calc(var(--ui-hit-target) + var(--space-3) * 2 + 1px);
+
+  /* Stacking order for everything that floats above the map. Lower tiers are gameplay chrome —
+     always scoped to the current screen and expected to sit low; higher tiers interrupt regardless
+     of what the player is doing, so they must never end up underneath a lower tier.
+       10 — dock, draft bar: persistent/contextual gameplay controls, live at opposite screen edges
+            and never intentionally overlap each other.
+       20 — notice: a transient alert (the one error bus) that can fire during any gameplay state,
+            including mid-draft: if its band ever overlaps the draft bar's, the notice must win.
+       30 — reserved for the update banner: an app-level message, not scoped to a play session, so
+            it outranks even the error notice. The banner's own stylesheet lives outside src/ui/ and
+            is not owned by this file — whoever styles it should reference this tier rather than
+            pick a new number. */
+  --ui-z-chrome: 10;
+  --ui-z-notice: 20;
+  --ui-z-banner: 30; /* not yet applied anywhere in src/ui/ — documented for the banner's owner */
 }

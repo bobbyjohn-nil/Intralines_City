@@ -33,3 +33,6 @@ coverage/
 
 # Claude Code local settings (agents and skills ARE committed)
 .claude/settings.local.json
+
+# Git worktrees created for isolated agent runs — full repo copies, never committed
+.claude/worktrees/

@@ -39,41 +39,83 @@ export const ROAD_WIDTH_M: Record<RoadClass, number> = {
 /**
  * Legibility floor in screen pixels — true-scale width clamps up to this when zoomed out, so a
  * class never disappears, and heavier classes keep a visibly thicker floor than lighter ones.
- * TUNE
+ *
+ * Widened from the original 0.3-0.4px step table (playtest finding: hierarchy unreadable at a
+ * glance) to a monotonically *growing* step — 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9px between
+ * neighbours, smallest gap at the bottom of the ladder, largest at the top — so the pair the
+ * player most needs to tell apart at a glance (motorway vs. trunk, i.e. "is this an arterial")
+ * gets the biggest jump (0.4px -> 0.9px), not the smallest. This is a rendering-only floor, not
+ * the represented road width (`ROAD_WIDTH_M`, unchanged — that is real-world data and stays
+ * true-scale). TUNE
  */
 export const ROAD_MIN_WIDTH_PX: Record<RoadClass, number> = {
-  motorway: 3.2,
-  trunk: 2.8,
-  primary: 2.4,
-  secondary: 2.0,
-  tertiary: 1.6,
-  residential: 1.2,
-  service: 0.9,
-  living_street: 0.9,
+  motorway: 5.0,
+  trunk: 4.1,
+  primary: 3.3,
+  secondary: 2.6,
+  tertiary: 2.0,
+  residential: 1.5,
+  service: 1.1,
+  living_street: 0.8,
 };
 
 /**
  * Blend factor from `--ink` (0) to `--muted` (1), by class — heavier roads read darker/heavier,
- * lighter classes fade toward the muted tone. TUNE
+ * lighter classes fade toward the muted tone.
+ *
+ * Evenly spaced at 1/7 steps (was an uneven 0.05-0.20 step table whose smallest gap — motorway to
+ * trunk, 0.05 — put the two most important classes only ~6 RGB units apart, functionally the same
+ * color; see the RGB-distance table in the playtest fix notes). Even spacing makes every adjacent
+ * pair's step the *same* size (~17 RGB units at noon), so no class-to-class boundary is weaker
+ * than any other — width (`ROAD_MIN_WIDTH_PX`) carries the emphasis at the top of the hierarchy,
+ * this carries uniform baseline separation everywhere. Value is the standard cartographic answer
+ * to hierarchy at a glance because, unlike width, it survives the night tint at a predictable,
+ * uniform ratio (the tint is a flat alpha composite, so it scales every pairwise distance by the
+ * same factor regardless of hue). TUNE
  */
 export const ROAD_COLOR_MIX: Record<RoadClass, number> = {
   motorway: 0,
-  trunk: 0.05,
-  primary: 0.15,
-  secondary: 0.3,
-  tertiary: 0.45,
-  residential: 0.65,
-  service: 0.85,
+  trunk: 0.14,
+  primary: 0.29,
+  secondary: 0.43,
+  tertiary: 0.57,
+  residential: 0.71,
+  service: 0.86,
   living_street: 1.0,
 };
 
 // ── Scenery ──────────────────────────────────────────────────────────────────
 
-/** Water fill opacity, blended over `--blue`. TUNE */
-export const WATER_ALPHA = 0.55;
+/**
+ * Water fill opacity, blended over `--blue`. Raised from 0.55 — water already had strong contrast
+ * against paper (~164 RGB units at noon) but the playtest's "reads as graph paper, not a city"
+ * verdict named it as underselling anyway; a deeper fill reads more like a body of water and less
+ * like a flat blue swatch, with no legibility cost (still a single unambiguous polygon layer under
+ * every gameplay overlay). TUNE
+ */
+export const WATER_ALPHA = 0.62;
 
-/** Park fill opacity, blended over `--amber`. TUNE */
-export const PARK_ALPHA = 0.35;
+/**
+ * Park fill opacity, blended over the mixed park color (see `PARK_COLOR_MIX_T` below). Raised from
+ * 0.35 — playtest finding: parks were unlocatable by eye across a whole session. The alpha alone
+ * was never the real problem (0.35 is not that low); `PARK_COLOR_MIX_T` is the actual fix, because
+ * pure `--amber` is nearly the same *lightness* as `--paper`, so no alpha of amber-over-paper can
+ * separate them much. Alpha is still raised alongside the color-mix change for headroom. TUNE
+ */
+export const PARK_ALPHA = 0.5;
+
+/**
+ * Blend factor from `--amber` (0) to `--muted` (1) for the park fill base color, mixed *before*
+ * `PARK_ALPHA` is applied. Pulling amber toward muted desaturates and darkens it into an
+ * olive/khaki tone that sits well below paper's lightness — see the RGB-distance table in the
+ * playtest fix notes: old amber-over-paper park fill was ~20 RGB units from paper at noon (and
+ * ~16 at night, i.e. nearly gone); this mix is ~69 at noon and ~54 at night. Stays on the amber
+ * hue family already used for parks/bike-mode elsewhere, so it doesn't collide with `--blue`
+ * water or read as a new invented color. Composited as a translucent *area fill*, so it never
+ * approaches the darkness of an opaque road stroke even at `living_street`'s pure-muted color —
+ * area fills and line strokes occupy different lightness bands by construction. TUNE
+ */
+export const PARK_COLOR_MIX_T = 0.55;
 
 // ── Out-of-bounds mask ───────────────────────────────────────────────────────
 

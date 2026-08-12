@@ -54,6 +54,27 @@ export interface Scenery {
   readonly parks: readonly Polygon[];
 }
 
+// ── Zones ────────────────────────────────────────────────────────────────────
+
+/**
+ * A census-block-group equivalent — the demand model's unit of demand (demand-model.md §1: "the
+ * unit is the census block group; Riverton: a synthetic equivalent") and, per
+ * depots-and-timetables.md §1's Zoning B fallback, the only thing a depot-eligibility check has to
+ * test against when a city pack carries no OSM land-use layer. `residents`/`jobs`/`areaHa` are the
+ * minimum both consumers read; `tourismJobs` is demand-model Stage A's extra field.
+ */
+export interface Zone {
+  readonly id: number;
+  /** Closed ring, same convention as `Polygon` elsewhere. Never overlaps a sibling zone or
+   * extends outside the city's `bounds`. */
+  readonly polygon: Polygon;
+  readonly centroid: LngLat;
+  readonly areaHa: number;
+  readonly residents: number;
+  readonly jobs: number;
+  readonly tourismJobs: number;
+}
+
 // ── City ─────────────────────────────────────────────────────────────────────
 
 export interface City {
@@ -63,6 +84,8 @@ export interface City {
   readonly bounds: Bounds;
   readonly graph: StreetGraph;
   readonly scenery: Scenery;
+  /** Census-block-group-equivalent zones — demand model input, depot-zoning fallback surface. */
+  readonly zones: readonly Zone[];
   /** Seed the city was generated from. Same seed must always give the same city. */
   readonly seed: number;
 }

@@ -31,10 +31,22 @@ and `metro40`. Goliath / Skyline / Volt-E must be transcribed from manual §12's
 
 `ridersEverServed` is a monotonic company-lifetime counter, never decremented, saved.
 
+**It counts linked trips, not boardings** — `Σ linkedTripsLineHour` from demand-model.md's
+`DemandResult`, never `boardingsLineHour`. A rider who transfers once is **one** rider served; count
+boardings and the player splits every line in half and unlocks the whole fleet at half the real
+ridership, for free (demand-model.md §3.2 — the same exploit as the fare one, wearing a different hat).
+The rule covers **every player-facing ridership figure**: the unlock thresholds and their progress bars
+here, and the top bar's Riders/day, which would otherwise overstate the network by exactly the transfer
+rate. This is deliberately a **different number** from the boardings the ledger charges fare and subsidy
+on (§17; fares-and-express.md §1) — money is per boarding because the rider pays twice, service is per
+trip because the rider travelled once. Both are correct for their own purpose; confusing them is the bug,
+so name the variables so they cannot be swapped by accident.
+
 **Locked models are shown, not hidden** — full stat row visible, greyed body, buy button replaced by
 a progress bar: `18,400 / 25,000 riders — about 6 days at your current rate`. Rate estimate = last
-3 game-days of boardings. Three reasons: the stat table is the player's planning document (you pick
-today's line length knowing a 115-seat bus is coming); it turns "riders served" from a number into a
+3 game-days of **linked trips**, matching the counter it predicts. Three reasons: the stat table is
+the player's planning document (you pick today's line length knowing a 115-seat bus is coming); it
+turns "riders served" from a number into a
 destination; and a Fleet panel with two rows reads as a finished feature, so the player never
 learns the fleet has depth. Volt-E shows **two** ticks, and the Chargers tick deep-links to the
 Depot panel rather than merely reporting failure.

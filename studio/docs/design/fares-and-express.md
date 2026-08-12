@@ -15,15 +15,18 @@ Slider **$1.00–$5.00 in 25¢ steps, default $2.25** (SPEC). 17 positions, emit
 floating point and `fare − 2.25` is exact, so **neutrality needs no epsilon.** It is **one fare for the
 company, not per line** `[choice]`: §17 says "*your* fare × every boarding", §11 puts the slider
 outside the line editor, and it makes §6's strategy one decision instead of twenty. `fareMin` is still
-**per line** because the express halving is — that is what demand-model.md's per-line fare array holds.
+**per line** because the express halving is — computed from the one scalar `fareUsd` the worker snapshot
+carries, never from a `fares[L]` array (demand-model.md §2 confirms there is no such array).
 
 ```
-fareMin(line) = (fareUsd − DEFAULT_FARE_USD) / USD_PER_PERCEIVED_MINUTE
-                * (isExpress(line) ? EXPRESS_FARE_SENSITIVITY : 1.0)      # SPEC §11
+fareDeviationMin(line) = (fareUsd − DEFAULT_FARE_USD) / USD_PER_PERCEIVED_MINUTE
+                       * (isExpress(line) ? EXPRESS_FARE_SENSITIVITY : 1.0)      # SPEC §11
 ```
 
-Added once per trip to `busMin` (demand-model.md §3): positive above $2.25, negative below, **exactly
-zero at $2.25**. Worked and verified — the manual's "~5.5 min" is prose; the number is 5.56.
+Added **per boarding** to `busMin` — it is the first term of demand-model.md §3.1's `fareMinBoarding` —
+positive above $2.25, negative below, **exactly zero at $2.25**. A second boarding additionally pays the
+full fare, `DEFAULT_FARE_USD / 0.18` = **12.5 perceived minutes**, which is a different term and is never
+halved (§3). Worked and verified — the manual's "~5.5 min" is prose; the number is 5.56.
 
 | Fare | `(F − 2.25) / 0.18` | local | express (×0.5) |
 |---|---|---|---|
@@ -36,10 +39,11 @@ is 1 dp, so the UI reads **+5.6 min at $3.25**; the constant is authority, the m
 spec the multiplier, derive the dollars, so they cannot drift. Revenue per boarding =
 `fareUsd + subsidy(line)`, accruing **per boarding**: a one-transfer trip pays twice.
 
-> ⚠ **Open asymmetry — flag, do not silently pick.** Money charges per *boarding* (§17), perceived
-> minutes once per *trip* (§11, "every trip"), so splitting one line into two doubles fare + subsidy on
-> the same rider at no perceived cost. Recommended fix `[choice]`: accumulate `fareMin` per boarding in
-> the RAPTOR label, so a transfer trip feels two fares. It touches demand-model.md, which I do not own.
+> ✔ **Asymmetry resolved 2026-08-12 — was: money per *boarding* (§17), perceived minutes per *trip*.**
+> Fixed in [demand-model.md](demand-model.md) §3.1, by the route this flag recommended: `fareMinBoarding`
+> accumulates in the RAPTOR label, so a transfer trip feels two fares and splitting a line at an arbitrary
+> midpoint moves from **+69 % revenue to −9 %**. Its §3.2 audit clears wait, transfer penalty and `×0.85`
+> as already per-boarding and correct. Two consequences land in this file: §3's halving rule, §6's residual.
 
 ## 2. The express predicate
 
@@ -68,8 +72,16 @@ isExpress   = stopCount >= 3 && routeLengthM >= 5000 && avgSpacingM >= 1200
 | Reward (all SPEC) | Constant | Consumer | Enters at |
 |---|---|---|---|
 | On-board time ×0.85 | `EXPRESS_ONBOARD_MULT` | sim | demand-model.md §3's `e`, and §4 step 2 |
-| Fare sensitivity halved | `EXPRESS_FARE_SENSITIVITY = 0.5` | sim | §1 above; survives transfers via `raptorFareMin[S]` |
+| Fare sensitivity halved | `EXPRESS_FARE_SENSITIVITY = 0.5` | sim | §1 above; survives transfers via `raptorFareMin[S·2]` |
 | Subsidy +50 % → $2.40 | `EXPRESS_SUBSIDY_MULT = 1.5` | ledger | §17 "City subsidy", per boarding, Stage C |
+
+**The halving applies to the deviation term only — never to the extra-boarding fare.** `sens(line)`
+multiplies `(fareUsd − 2.25)` and nothing else; `fareMinBoarding`'s second term reads `DEFAULT_FARE_USD`
+flat. §11 halves "the perceived-minutes fare *penalty*", i.e. the cost of deviating from $2.25 — express
+buys tolerance for a dear fare, not for paying twice. **The natural composition is the wrong one**, and
+tidying it into one multiply reopens the exploit exactly where the subsidy is largest: halve both and a
+12 km express splits into two 6 km expresses, each still ≥ 5 km / ≥ 3 stops / ≥ 1.2 km so `isExpress()`
+keeps both badges, doubling $2.40/boarding for **+24 %** (demand-model.md §3.1, last table row).
 
 ## 4. Telling the player why they are not express
 
@@ -136,6 +148,17 @@ corridor-dependent: where the bus badly beats the car, high fares extract more. 
 - **No tooltip ever suggests lowering the fare.** The number that teaches it is `$/boarding`, sitting
   under a slider the player is already dragging.
 
+> ⚠ **Open question — the low-fare residual. Recorded, not fixed, and not fixable from the demand side.**
+> The split brake scales with `fare` (the rider pays the fare again), the prize with `fare + subsidy`, so
+> **below ≈ $1.90 splitting pays again: +29 % at $1.25, +41 % at $1.00** (hub; +16 % at a plain stop). Not
+> a modelling error — it is §17's $1.60/boarding subsidy exceeding a $1.00 fare, and per-boarding subsidy
+> regimes really do reward chopping routes up. No perceived-minute term can charge it without
+> contradicting §17, since the rider never sees the city's money. The real fix is **subsidy paid per
+> linked trip, not per boarding** — one row of §17's In table, identical money where nobody transfers.
+> **Not implemented, deliberately:** ~30 % lost ridership already brakes it via the report grant, and
+> demand-model.md §7 asserts the residual as a test so it cannot grow silently. Revisit after playtest,
+> with the ledger's owner.
+
 ## 7. Feel, edges, build order
 
 **Feel.** Steps snap with a 1-frame tick; ←/→ moves one 25¢ step, Shift+← four. While a recompute is
@@ -146,14 +169,19 @@ until resume); spam-dragging costs one recompute per 250 ms, never more; `fareUs
 field defaulting to `DEFAULT_FARE_USD`, so pre-fare saves load neutral and unaffected — the manual's
 own promise; `isExpress` is never saved, so an old save gets the right status the instant it loads;
 bankruptcy, resize and reload change nothing here; no controller path exists (GAME.md: mouse and
-keyboard). **Tests:** neutrality — `fare == 2.25` ⇒ bit-identical to fare disabled (exact, per §1);
-ridership non-increasing in fare; boundaries at exactly 5 000 m / 3 stops / 1 200 m all pass (`>=`) and
-one under each fails; a grep test proves no second implementation of the three thresholds.
+keyboard). **Tests:** neutrality — at `fare == 2.25` the *deviation* term is exactly 0 on **every**
+boarding, so direct trips are bit-identical to a run with it disabled (exact, per §1), while the
+extra-boarding term is not a slider effect and stays on. Ridership non-increasing in fare; an
+**express-to-express split must not raise revenue** at `fare ≥ 1.90` (§3; assertion in demand-model.md
+§7); boundaries at exactly 5 000 m / 3 stops / 1 200 m all pass (`>=`) and one under each fails; a grep
+test proves no second implementation of the three thresholds — nor of `EXPRESS_FARE_SENSITIVITY`, which
+has exactly one call site.
 
 **Build order.** (1) `isExpress()` + line metrics + tests + list tag + badge/reason copy — ships
 *before* the sim reads it, since the ledger consumer ($2.40) needs only boardings. (2) Fare slider,
-`$/boarding` line, Finance rows; fare revenue-only, matching demand-model.md step 1. (3) `fareMin` + the
-neutrality test (step 5 there). (4) `×0.85` and the halved sensitivity. (5) §5's guard rails.
+`$/boarding` line, Finance rows; fare revenue-only, matching demand-model.md step 1. (3) `fareMinBoarding`
+**in its per-boarding form** + the neutrality test (step 5 there) — never ship a deviation-only version,
+which teaches the split. (4) `×0.85` and the halved sensitivity. (5) §5's guard rails.
 
 **Cut line.** Drop 5 entirely, and drop the slider's live riders/day preview — keep `$/boarding`, the
 one that teaches. **Never cut §4's reason copy:** without it express is an invisible rule, the one

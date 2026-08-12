@@ -2,11 +2,23 @@
  * Styling for Dock.tsx. Colors are the paper palette custom properties only (see styles.css) —
  * no hardcoded hex, so the bar flips correctly with the dark theme's `prefers-color-scheme` swap.
  * Spacing, type and radius come from tokens.css — nothing here picks its own value.
+ *
+ * `.dock` is fixed to the bottom edge (its border-top is the seam against the map above it) and
+ * out of normal document flow, same reasoning as `.draft-bar` — it was a flex sibling shrinking
+ * the map on mount. Because the dock is permanent, always-visible chrome (not contextual like the
+ * draft bar), the map does not just overlay it: App.css reserves the dock's exact height via
+ * --ui-dock-height so the map's own clickable area never renders underneath opaque chrome the
+ * player could otherwise have clicked.
  */
 
 @import './tokens.css';
 
 .dock {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: var(--ui-z-chrome);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -15,6 +27,7 @@
   background: var(--panel);
   color: var(--ink);
   border-top: 1px solid var(--muted);
+  box-shadow: 0 -2px 8px color-mix(in srgb, var(--ink) 12%, transparent);
 }
 
 .dock__group {

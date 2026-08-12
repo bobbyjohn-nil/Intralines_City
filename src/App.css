@@ -1,6 +1,8 @@
 /* App shell only. Component styling lives with its component. Palette variables come from
    styles.css — never a hex literal here. */
 
+@import './ui/tokens.css';
+
 .app {
   display: flex;
   flex-direction: column;
@@ -11,12 +13,24 @@
   color: var(--ink);
 }
 
-/* The map takes every pixel the top bar does not. min-height:0 is load-bearing — without it the
-   canvas refuses to shrink inside the flex column and overflows the viewport. */
+/* The map used to be flex:1 1 auto, a normal-flow sibling of the draft bar and dock in this
+   column. That meant opening "New line" — mounting the draft bar — shrank the map's flex box and
+   re-fit the city, a visible shift at the exact moment the player was about to click a street.
+   The draft bar and dock are now fixed overlays (see DraftBar.css, Dock.css) and no longer
+   participate in this flex column at all, so the map is sized directly off the viewport instead:
+   full width, from the top bar's bottom edge to the dock's top edge, via the same height tokens
+   those two bars size themselves with. That pairing is what keeps this in sync — if either bar's
+   height token changes, the map's reserved space changes with it instead of drifting.
+   The draft bar is contextual (only while drawing a line) so the map is allowed to render behind
+   it — it overlays, at --ui-z-chrome, same as the notice can. The dock is permanent chrome, so its
+   height is subtracted rather than overlaid: the map never renders city underneath opaque chrome
+   the player could otherwise have clicked. */
 .app-map {
-  position: relative;
-  flex: 1 1 auto;
-  min-height: 0;
+  position: fixed;
+  top: var(--ui-topbar-height);
+  right: 0;
+  bottom: var(--ui-dock-height);
+  left: 0;
 }
 
 .app-map canvas {

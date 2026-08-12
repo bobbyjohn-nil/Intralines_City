@@ -3,6 +3,8 @@
 
 import { registerSW } from "virtual:pwa-register";
 
+import { report } from "../game/errors/bus";
+
 // SPEC — manual §2 ("Starting up" / "Updates"): "capped at two automatic reloads per session so a
 // half-propagated deploy can't loop you."
 const MAX_AUTOMATIC_RELOADS_PER_SESSION = 2;
@@ -94,10 +96,18 @@ if (import.meta.env.PROD) {
       setState({ offlineReady: true });
     },
     onRegisterError(error) {
-      // Registration failures should reach the game's error bus (manual §20), not vanish into the
-      // console. No error-bus hook exists yet in this module's scope (App.tsx/src/ui/ own it) —
-      // console.error is the honest placeholder until that's wired.
-      console.error("[pwa] service worker registration failed", error);
+      // errors.md §2's note-tier example, verbatim: "SW registration failed while the app is
+      // already cached." `note`, not `problem` — by the time registration can fail, the app is
+      // already precached from the previous successful install and keeps working offline, so
+      // nothing the player asked for failed and nothing they own is at risk (§2's note test).
+      // Badge + log only; the bus's console sink still surfaces it in dev and prod (§1).
+      report({
+        severity: "note",
+        source: "pwa",
+        code: "register-failed",
+        message: "SW registration failed while the app is already cached.",
+        detail: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+      });
     },
   });
 }

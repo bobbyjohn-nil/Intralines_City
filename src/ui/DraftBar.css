@@ -3,11 +3,24 @@
  * — no hardcoded hex. Every stat reserves its own width and the hint line reserves its own height
  * so the bar's box never resizes as the draft grows or Create's disabled state toggles. Spacing,
  * type and radius come from tokens.css — nothing here picks its own value.
+ *
+ * `.draft-bar` is fixed, anchored directly under the top bar (its own border-bottom is the seam
+ * against the map below it), and out of normal document flow. It used to be a flex sibling in
+ * App.css's column, so opening a draft shrank the map and re-fit the city under the cursor at the
+ * exact moment the player was about to click a street — a confirmed layout-shift defect. It now
+ * overlays the map instead of displacing it: the map's box never changes size when this mounts or
+ * unmounts. Background stays fully opaque (not translucent) so it reads clearly regardless of what
+ * is rendered on the map underneath.
  */
 
 @import './tokens.css';
 
 .draft-bar {
+  position: fixed;
+  top: var(--ui-topbar-height);
+  left: 0;
+  right: 0;
+  z-index: var(--ui-z-chrome);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -17,6 +30,7 @@
   background: var(--panel);
   color: var(--ink);
   border-bottom: 1px solid var(--muted);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--ink) 12%, transparent);
   font-size: var(--ui-text-base);
   line-height: 1;
 }

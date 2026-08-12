@@ -331,6 +331,86 @@ zone is a long runway, and Talon & Grasp is always available with no credit chec
 make a player unable to act cheaply. It must never make them unable to act.**
 *Explicitly rejected:* grade-based interest, escalating fines, any game-over.
 
+**49. My fix for the line-splitting exploit was wrong, and the corrected one is different** (2026-08-12)
+I proposed accumulating `fareMin` per boarding. `fareMin` is a *deviation* from $2.25, so that is
+**exactly zero at the default fare** — changing nothing where it matters most — and *negative* below
+it, where doubling a −6.94 min term makes a forced transfer more attractive. My fix would have turned
+a +69% exploit into a **+117%** one.
+*The actual fix:* the first boarding pays the deviation (the baseline is already inside the logit
+calibration); every later boarding pays the **full fare**, 12.5 perceived minutes at $2.25. Splitting
+goes from +69% to −9%.
+*Kept as the clearest lesson of the session:* a fix that sounds right and is arithmetically inert.
+The brief demanded the numbers be worked before and after, which is the only reason it was caught.
+
+**50. Crowding was the same bug class, undetected** (2026-08-12)
+`(1/load)^0.65` applied per leg and multiplied would shed a transfer rider **twice**, breaking the
+model's own "one transfer = exactly two boardings" conservation test. Now: **minimum over legs,
+applied once.** Station crowding likewise counts boarding stops only — origin and transfer, never
+egress.
+*Generalisation worth carrying:* wherever a per-trip quantity meets a per-boarding one, check the
+composition. Two specs had it; nobody had looked.
+
+**51. Fleet unlocks count linked trips, not boardings** (2026-08-12)
+Unlocks keyed to "riders ever served" would otherwise be the same exploit again — split every line and
+buy the Goliath at half the real ridership. Same for the top-bar Riders/day figure. Both now read
+`linkedTripsLineHour`. The ledger still charges fare per boarding; **both numbers are correct for
+their own purpose and confusing them is the bug.**
+
+**52. Express halves the deviation only, never the extra-boarding fare** (2026-08-12)
+The natural composition is the wrong one. Halving the full extra-boarding term lets a player split a
+12 km express into two 6 km expresses — both still qualifying — and double a $2.40/boarding subsidy
+for **+24%**. Halving the deviation only is also the more faithful reading of §11, whose "fare
+sensitivity" is explicitly about deviation from $2.25.
+
+**53. A residual low-fare exploit is real, structural, and left in for now** (2026-08-12) **⚠︎ REVIEW**
+Below roughly $1.90, splitting still pays: **+29% at $1.25, +41% at $1.00.** The brake scales with
+`fare`, the prize with `fare + subsidy`, and a $1.60/boarding subsidy exceeds a $1.00 fare.
+*This is a real perverse incentive in per-boarding subsidy regimes, not a modelling error* — actual
+agencies face it. It cannot be closed from the demand side without contradicting §17.
+*The real fix, if playtest shows players find it:* pay the subsidy **per linked trip** rather than per
+boarding. That is a ledger change and a deviation from the manual, so it waits for evidence.
+
+**54. Legibility is defended with RGB distances, not opinions** (2026-08-12)
+Parks were invisible not because their alpha was too low but because amber and paper have nearly the
+same *lightness* — no alpha of amber-over-paper separates them. Mixing toward `--muted` first took the
+park/paper distance from 20.4 to 69.4 at noon and 16.4 to 54.1 under the night tint. The road ladder's
+worst gap was **motorway→trunk at 6.4 RGB units**, the pair a player most needs to tell apart, and
+`service`/`living_street` shared an identical width floor — zero separation. Now evenly spaced, worst
+case 15.8 noon / 12.8 night.
+*The method is the decision:* every visual change that must stay distinguishable is defended with a
+computed distance table at noon **and** at the 0.22 night alpha, not by looking at it.
+
+**55. `mixHex` and `withAlpha` could not be chained** (2026-08-12)
+`mixHex` returns an `rgb(...)` string; `withAlpha` parses only hex. Chaining them silently produced a
+corrupt colour. Fixed with a single `mixHexAlpha` helper rather than leaving a trap for the next
+person who reasonably assumes two colour helpers compose.
+
+**56. Worktree copies were being counted in the test suite** (2026-08-12)
+Agents running in isolated worktrees under `.claude/worktrees/` leave a full copy of the repo,
+including its tests, and vitest's default glob was discovering them — running every test twice, half
+of them against **another agent's in-progress code**. Every "the full suite passes" report during that
+window was partly fiction.
+*Fixed by excluding `.claude/**` from test discovery and gitignoring the worktree directory.* Worth
+recording because worktree isolation is otherwise the right tool, and this is its sharp edge.
+
+**57. Three refactors bundled into one pass, and the blast radius proved it right** (2026-08-12)
+Hoisting stops out of `Line`, stable branded ids, and `roadClass` on `Stop` landed together.
+`buildRouteSchedule` needed a `stopsById` parameter and every hand-built `Line` fixture across three
+test files had to change — because after the hoist **a `Line` cannot answer "what are my stops" on
+its own anymore.** Done separately, that same set of call sites would have been rewritten three
+times, with two intermediate shapes that were nobody's target.
+*Branded ids (`number & { __brand }`) are the durable part:* the id/index collision existed because
+the two were the same type and the compiler could not object. Renumbering fixed today's bug; the
+brand stops the class of bug returning.
+
+**58. My own ownership rules have to be applied consistently or they do not work** (2026-08-12)
+I forbade `src/game/constants.ts` to the zone agent and forgot to forbid it to the error-bus agent.
+Both it and the worktree refactor appended constants to the tail of that file, creating a merge
+conflict that the rules exist to prevent. Small and mechanical to resolve — but it was my
+inconsistency, not an agent's mistake.
+*Rule going forward:* shared files are named in **every** brief that could plausibly touch them, not
+only the ones where I happen to think of it.
+
 ## Process
 
 **20. Nothing enters the changelog until `playtester` has run it** (2026-08-12)

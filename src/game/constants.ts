@@ -187,3 +187,20 @@ export const WALK_MINUTES_PER_KM = 12;
 
 /** Service hours — outside these nothing runs and no driver wages accrue. SPEC */
 export const DEFAULT_SERVICE_HOURS = { firstHour: 6, lastHour: 22 } as const;
+
+// ── Errors (src/game/errors/, errors.md §1) ───────────────────────────────────
+
+/** A `source/code` key toasts at most once per this many ms. SPEC (errors.md §1) */
+export const ERROR_TOAST_DEDUPE_MS = 120_000;
+/** A `source/code` key toasts at most this many times per session; after that it is badge-only.
+ * SPEC (errors.md §1) */
+export const ERROR_TOAST_MAX_PER_CODE = 3;
+/** Toasts visible at once — older ones collapse into the badge. Owned by the toast layer (not yet
+ * built); the bus does not enforce this. SPEC (errors.md §1) */
+export const ERROR_TOAST_MAX_ONSCREEN = 3;
+/** Session log ring buffer size, in distinct `source/code` keys. Evicts lowest severity, then
+ * oldest `lastAtMs`, once full. SPEC (errors.md §1) */
+export const ERROR_LOG_CAPACITY = 200;
+/** Reports made before any sink is registered (pre-mount boot code, the worker bridge) queue up to
+ * this many and flush to the first sink that registers. SPEC (errors.md §1, "cap 50") */
+export const ERROR_QUEUE_CAPACITY = 50;

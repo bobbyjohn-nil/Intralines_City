@@ -18,7 +18,7 @@
  */
 
 import type { Bounds, City, Polygon, RoadClass, RoadEdge, RoadNode } from '../game/types';
-import { readPaperPalette, mixHex, withAlpha, type PaperPalette } from './paperPalette';
+import { readPaperPalette, mixHex, mixHexAlpha, withAlpha, type PaperPalette } from './paperPalette';
 import type { ScreenPoint } from './projection';
 import { Viewport } from './projection';
 import {
@@ -27,6 +27,7 @@ import {
   MASK_DASH_PATTERN,
   MASK_DASH_WIDTH_PX,
   PARK_ALPHA,
+  PARK_COLOR_MIX_T,
   ROAD_COLOR_MIX,
   ROAD_DRAW_ORDER,
   ROAD_MIN_WIDTH_PX,
@@ -159,13 +160,16 @@ export function drawCity(
   );
 
   // ── Parks ──────────────────────────────────────────────────────────────
+  // Mixed toward `--muted` before alpha, not pure amber-over-paper — see `PARK_COLOR_MIX_T`'s
+  // comment in style.ts: pure amber is nearly paper's own lightness, so no alpha of it alone
+  // separates a park from the page it's printed on.
   drawPolygonLayer(
     ctx,
     viewport,
     city.scenery.parks,
     cache.parkBounds,
     visible,
-    withAlpha(palette.amber, PARK_ALPHA),
+    mixHexAlpha(palette.amber, palette.muted, PARK_COLOR_MIX_T, PARK_ALPHA),
   );
 
   // ── Streets, lightest class first so heavier classes paint on top ───────

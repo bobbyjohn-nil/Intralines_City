@@ -21,6 +21,16 @@ Goal: a bus drives a line you drew, on a fake city, and it costs money. No real 
 drawing, bus motion and the money floor all ship and are verified in a browser. Everything below is
 follow-up work found while building it.
 
+**Found in the second full playtest (2026-08-12) — queued, not yet fixed:**
+
+- [ ] **Buses are still invisible.** The size fix landed but `drawBuses()` fills the marker and never strokes it, in a tan within a few RGB units of the paper background. `drawStops()` fills *and* strokes, which is why stops read and buses do not. Fix after the stop-hoisting refactor merges, since both touch `drawOverlays.ts`
+- [ ] The diagonal avenue spans only 10 of 43 grid columns (`DIAGONAL_HALF_SPAN_COLUMNS = 5`) — about 200 m in a 6 km city. It reads as a stray pencil scratch, and "creates triangular blocks" is barely achievable at that span
+- [ ] The draft bar reflows the map. It is a normal-flow flex sibling, so opening it shrinks and re-fits the map viewport. `Notice` is `position: fixed` and correctly causes no shift — the draft bar should match
+- [ ] The map occupies about a third of the screen width, centred in a large empty void. **Diagnosed: not CSS.** The container and canvas are edge-to-edge; the canvas is drawing a small city inside a full-size box. Route to `src/render/` — fit-to-bounds leaving excess padding, or a resize not tracking the container. Blocked until the stop-hoisting refactor merges out of its worktree
+- [ ] `UpdateBanner.css` does not use the new `--ui-z-banner` token. A z-index scale now exists in `tokens.css` (chrome 10, notice 20, banner 30); the banner predates it and still sets its own value
+- [ ] Verify `--ui-dock-height` matches the dock's real rendered height. It assumes the icon+label stack fits the 40px hit-target box; if it overflows, the map is inset short of or past the dock's edge. Needs a browser
+- [ ] `GAME.md` promises buses run headlights and lit windows at night. Zero implementation exists — a documented, unbuilt feature
+
 **Found while verifying the first playable build (2026-08-12):**
 
 - [ ] Riverton has no road above 55 km/h, so the "stops can't sit on fast roads" refusal is unreachable in the demo city and cannot be tested by playing. Add a trunk or motorway on the edge of the map — it also gives the map a visible hierarchy top end
@@ -43,6 +53,7 @@ Goal: riders decide whether to ride, and the decision is legible.
 - [ ] Save envelope — implement to [save-format.md](docs/design/save-format.md). Envelope, the 8-step ordered check, empty migration chain, stable ids, position-anchored stops
 - [ ] **Do before the save envelope:** hoist stops out of `Line`. `Line.stops` nests `Stop` objects, so a stop shared by two lines is duplicated — becomes a top-level `stops[]` with `line.stopIds[]`. Connectability scoring (§18) needs this shape anyway, and every day it waits is more code to change
 - [ ] **Do before the save envelope:** `Stop` needs a persisted `roadClass` plus derived `orphaned`/`movedM`, and the re-anchor constants (2 m / 3 m / 12 m / 30 m / 40 m / 15 m) belong in `constants.ts`. Per [save-format.md](docs/design/save-format.md) §5
+- [ ] **Confirmed latent corruption, found 2026-08-12:** stop ids collide across lines. `addStop` uses `id: state.stops.length`, a per-draft counter, so every line's first stop is id `0`. Two lines sharing a click produce two distinct `Stop` objects with the same id. Harmless today only because nothing keys on `stop.id` alone — a save envelope that did would corrupt data silently. Pinned by a characterization test marked expected-to-flip
 - [ ] **Do before the save envelope:** stable ids everywhere. Stops and lines are array indices today, which do not survive removal or reordering. Monotonic never-reused ids from a persisted counter
 - [ ] Demand model — gravity O–D table, 650 m walk, mode-choice logit, captive riders
 - [ ] Timetables — Normal mode (bus counts → headway), service hours, 2-min headway floor

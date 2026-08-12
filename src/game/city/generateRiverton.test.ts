@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { generateRiverton, RIVERTON_SEED } from './generateRiverton';
-import type { LngLat, Polygon } from '../types';
+import { isDepotEligibleZone, medianZoneDensityPerHa } from './zones';
+import type { LngLat, Polygon, Zone } from '../types';
 
 // ── Shared geometry helpers ──────────────────────────────────────────────────
 // Self-contained (deliberately not importing from `lines/geo.ts` or similar) — these tests are
@@ -30,6 +31,31 @@ function crossingCount(p1: LngLat, p2: LngLat, ring: Polygon): number {
     if (segmentsCross(p1, p2, a, b)) hits++;
   }
   return hits;
+}
+
+/** Shoelace polygon area, in whatever units the ring's coordinates are already in (used below
+ * directly on lng/lat — see the zone-overlap test for why that's still an exact comparison). */
+function shoelaceArea(ring: Polygon): number {
+  let area2 = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const [x0, y0] = ring[i]!;
+    const [x1, y1] = ring[(i + 1) % ring.length]!;
+    area2 += x0 * y1 - x1 * y0;
+  }
+  return Math.abs(area2) / 2;
+}
+
+/** Great-circle distance, metres. Local copy, per this file's own convention (see the header
+ * comment) of checking the generator's output from the outside rather than sharing internals. */
+function haversineMeters(a: LngLat, b: LngLat): number {
+  const R = 6_371_000;
+  const toRad = (deg: number): number => (deg * Math.PI) / 180;
+  const [lng1, lat1] = a;
+  const [lng2, lat2] = b;
+  const dPhi = toRad(lat2 - lat1);
+  const dLambda = toRad(lng2 - lng1);
+  const h = Math.sin(dPhi / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLambda / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
 describe('generateRiverton', () => {
@@ -133,13 +159,20 @@ describe('generateRiverton', () => {
     expect(mean).toBeGreaterThan(100);
     expect(mean).toBeLessThan(180);
 
+    // The now-full-width diagonal slices through enough grid edges that its shorter fragments
+    // pull the population *mean* down measurably — that's expected, not a regression. The
+    // median is what a "plain, untouched grid block" actually measures, since fragments are a
+    // minority; cluster the tightness check around that instead of the (fragment-skewed) mean.
+    const sorted = [...lengths].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)]!;
+
     // Almost every residential edge is a plain, untouched grid block; only the handful the
     // diagonal avenue slices through deviate from the block size.
-    const withinFivePercent = lengths.filter((v) => Math.abs(v - mean) < mean * 0.05);
+    const withinFivePercent = lengths.filter((v) => Math.abs(v - median) < median * 0.05);
     expect(withinFivePercent.length / lengths.length).toBeGreaterThan(0.9);
 
-    const variance = withinFivePercent.reduce((sum, v) => sum + (v - mean) ** 2, 0) / withinFivePercent.length;
-    expect(Math.sqrt(variance)).toBeLessThan(mean * 0.01);
+    const variance = withinFivePercent.reduce((sum, v) => sum + (v - median) ** 2, 0) / withinFivePercent.length;
+    expect(Math.sqrt(variance)).toBeLessThan(median * 0.01);
   });
 
   it('connects the two riverbanks only at a handful of explicit bridges', () => {
@@ -192,22 +225,72 @@ describe('generateRiverton', () => {
     expect(visited.has(northNode!.id)).toBe(true);
   });
 
+  /** Shared by the diagonal-avenue tests below — the same off-axis-primary-edge filter the
+   * original "cuts a diagonal avenue" test used, so a chain of these edges is the avenue. */
+  function findDiagonalEdges(city: ReturnType<typeof generateRiverton>): { edge: (typeof city.graph.edges)[number] }[] {
+    const nodeById = new Map(city.graph.nodes.map((n) => [n.id, n]));
+    return city.graph.edges
+      .filter((edge) => {
+        if (edge.roadClass !== 'primary') return false;
+        const from = nodeById.get(edge.from)!;
+        const to = nodeById.get(edge.to)!;
+        const dx = Math.abs(to.pos[0] - from.pos[0]);
+        const dy = Math.abs(to.pos[1] - from.pos[1]);
+        if (dx < 1e-12 || dy < 1e-12) return false; // axis-aligned street
+        const ratio = dx / dy;
+        return ratio > 0.05 && ratio < 20; // meaningfully off-axis, not just float noise
+      })
+      .map((edge) => ({ edge }));
+  }
+
   it('cuts a diagonal avenue across the grid, not just axis-aligned streets', () => {
     const city = generateRiverton(RIVERTON_SEED);
-    const nodeById = new Map(city.graph.nodes.map((n) => [n.id, n]));
-
-    const diagonalEdges = city.graph.edges.filter((edge) => {
-      if (edge.roadClass !== 'primary') return false;
-      const from = nodeById.get(edge.from)!;
-      const to = nodeById.get(edge.to)!;
-      const dx = Math.abs(to.pos[0] - from.pos[0]);
-      const dy = Math.abs(to.pos[1] - from.pos[1]);
-      if (dx < 1e-12 || dy < 1e-12) return false; // axis-aligned street
-      const ratio = dx / dy;
-      return ratio > 0.05 && ratio < 20; // meaningfully off-axis, not just float noise
-    });
-
+    const diagonalEdges = findDiagonalEdges(city);
     expect(diagonalEdges.length).toBeGreaterThan(0);
+  });
+
+  it('spans most of the city, not a fifth of it, so it reads as a real avenue', () => {
+    const city = generateRiverton(RIVERTON_SEED);
+    const nodeById = new Map(city.graph.nodes.map((n) => [n.id, n]));
+    const diagonalEdges = findDiagonalEdges(city);
+
+    const lngs = diagonalEdges.flatMap(({ edge }) => [nodeById.get(edge.from)!.pos[0], nodeById.get(edge.to)!.pos[0]]);
+    const spanDeg = Math.max(...lngs) - Math.min(...lngs);
+    const cityWidthDeg = city.bounds.east - city.bounds.west;
+
+    // Previously ~10 of 43 grid columns (well under a quarter of the city's width); the avenue
+    // now runs the grid's full east-west extent, so it should cover most of the city's width.
+    expect(spanDeg / cityWidthDeg).toBeGreaterThan(0.8);
+  });
+
+  it('terminates the diagonal avenue at the city edge, not dangling mid-block', () => {
+    const city = generateRiverton(RIVERTON_SEED);
+    const nodeById = new Map(city.graph.nodes.map((n) => [n.id, n]));
+    const diagonalEdges = findDiagonalEdges(city);
+
+    // The avenue is a single chain: within just its own edges, the two ends are the only nodes
+    // with degree 1 (every interior node has two neighbours along the chain).
+    const degree = new Map<number, number>();
+    for (const { edge } of diagonalEdges) {
+      degree.set(edge.from, (degree.get(edge.from) ?? 0) + 1);
+      degree.set(edge.to, (degree.get(edge.to) ?? 0) + 1);
+    }
+    const endpointIds = [...degree.entries()].filter(([, d]) => d === 1).map(([id]) => id);
+    expect(endpointIds.length).toBe(2);
+
+    // A real terminus sits on the city's boundary column — the same longitude as the grid's
+    // outermost nodes — rather than at an arbitrary interior intersection with nothing past it.
+    const allLngs = city.graph.nodes.map((n) => n.pos[0]);
+    const minLng = Math.min(...allLngs);
+    const maxLng = Math.max(...allLngs);
+    const epsilon = 1e-9;
+
+    for (const id of endpointIds) {
+      const lng = nodeById.get(id)!.pos[0];
+      const atWestEdge = Math.abs(lng - minLng) < epsilon;
+      const atEastEdge = Math.abs(lng - maxLng) < epsilon;
+      expect(atWestEdge || atEastEdge).toBe(true);
+    }
   });
 
   it('places 3-5 parks that never overlap street geometry', () => {
@@ -251,5 +334,169 @@ describe('generateRiverton', () => {
     const widthKm = (widthDeg * 111.32 * Math.cos(midLatRad));
     expect(widthKm).toBeGreaterThan(4);
     expect(widthKm).toBeLessThan(9);
+  });
+});
+
+// ── Zones ────────────────────────────────────────────────────────────────────
+// demand-model.md §5 (Riverton Stage A) and depots-and-timetables.md §1 (Zoning B fallback) are
+// the two consumers a zone table has to satisfy. `isDepotEligibleZone`/`medianZoneDensityPerHa`
+// are imported from `./zones` rather than reimplemented — the same shared predicate depot siting
+// itself will use once that module lands.
+
+describe('generateRiverton: zones', () => {
+  it('emits exactly Z = 96 zones (demand-model.md §5)', () => {
+    const city = generateRiverton(RIVERTON_SEED);
+    expect(city.zones.length).toBe(96);
+  });
+
+  it('every zone is a well-formed polygon with a positive area', () => {
+    const city = generateRiverton(RIVERTON_SEED);
+    for (const zone of city.zones) {
+      expect(zone.polygon.length).toBeGreaterThanOrEqual(3);
+      expect(zone.areaHa).toBeGreaterThan(0);
+      expect(zone.residents).toBeGreaterThan(0);
+      expect(zone.jobs).toBeGreaterThan(0);
+      expect(zone.tourismJobs).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('total residents is close to demand-model.md §5\'s "population 42,000"', () => {
+    const city = generateRiverton(RIVERTON_SEED);
+    const totalResidents = city.zones.reduce((sum, z) => sum + z.residents, 0);
+    // Per-zone rounding and the population floor mean this can't be exact; within 10% is a
+    // meaningful regression guard without being brittle to a rounding-strategy tweak.
+    expect(totalResidents).toBeGreaterThan(42_000 * 0.9);
+    expect(totalResidents).toBeLessThan(42_000 * 1.1);
+  });
+
+  it('total jobs is close to total residents ("normalised so Σjobs = Σprod", demand-model.md §5)', () => {
+    const city = generateRiverton(RIVERTON_SEED);
+    const totalResidents = city.zones.reduce((sum, z) => sum + z.residents, 0);
+    const totalJobs = city.zones.reduce((sum, z) => sum + z.jobs, 0);
+    // Normalisation happens before the deliberate industrial-district overrides are applied (see
+    // generateRiverton.ts's buildZones), so a small, bounded gap from those few zones is expected;
+    // 10% comfortably bounds it while still catching a real normalisation regression.
+    expect(totalJobs).toBeGreaterThan(totalResidents * 0.9);
+    expect(totalJobs).toBeLessThan(totalResidents * 1.1);
+  });
+
+  it('tourism jobs are confined to the 4 zones nearest the core, 12% of those zones\' jobs', () => {
+    const city = generateRiverton(RIVERTON_SEED);
+    const zonesWithTourism = city.zones.filter((z) => z.tourismJobs > 0);
+    expect(zonesWithTourism.length).toBe(4);
+    for (const zone of zonesWithTourism) {
+      expect(zone.tourismJobs).toBeCloseTo(0.12 * zone.jobs, 0);
+    }
+  });
+
+  it('zones never overlap: total zone area exactly matches their combined bounding box (a true partition, no double-covered ground)', () => {
+    // A Voronoi diagram's cells share exact boundary edges by construction, so a ray-cast
+    // point-in-polygon check on shared vertices is inherently ambiguous (floating-point boundary
+    // cases, not a real bug). Area conservation sidesteps that: if any pair of zones overlapped,
+    // the sum of their individual areas would exceed the area of the ground they can possibly
+    // cover; if there were gaps, it would fall short. `metersToLngLat` is a fixed affine map (one
+    // constant scale per axis, not a per-point projection), so shoelace areas computed directly in
+    // lng/lat are exactly proportional to their metric equivalents — the ratio below is exact.
+    const city = generateRiverton(RIVERTON_SEED);
+    const totalZoneArea = city.zones.reduce((sum, z) => sum + shoelaceArea(z.polygon), 0);
+
+    const allVertices = city.zones.flatMap((z) => z.polygon);
+    const lngs = allVertices.map(([lng]) => lng);
+    const lats = allVertices.map(([, lat]) => lat);
+    const boundingBoxArea = (Math.max(...lngs) - Math.min(...lngs)) * (Math.max(...lats) - Math.min(...lats));
+
+    expect(totalZoneArea / boundingBoxArea).toBeGreaterThan(0.9999);
+    expect(totalZoneArea / boundingBoxArea).toBeLessThan(1.0001);
+  });
+
+  it('every zone stays inside city.bounds', () => {
+    const city = generateRiverton(RIVERTON_SEED);
+    for (const zone of city.zones) {
+      for (const [lng, lat] of zone.polygon) {
+        expect(lng).toBeGreaterThanOrEqual(city.bounds.west);
+        expect(lng).toBeLessThanOrEqual(city.bounds.east);
+        expect(lat).toBeGreaterThanOrEqual(city.bounds.south);
+        expect(lat).toBeLessThanOrEqual(city.bounds.north);
+      }
+    }
+  });
+
+  it('reads job-heavy near the core and resident-heavy further out — "a radial line worth drawing"', () => {
+    const city = generateRiverton(RIVERTON_SEED);
+    const center: LngLat = [(city.bounds.west + city.bounds.east) / 2, (city.bounds.south + city.bounds.north) / 2];
+
+    // Exclude the deliberate industrial-district overrides (residents < 100 — see buildZones):
+    // those are a documented, deliberate exception to the radial shape, not part of it.
+    const byDistance = city.zones
+      .filter((z) => z.residents >= 100)
+      .map((z) => ({ zone: z, r: haversineMeters(z.centroid, center) }))
+      .sort((a, b) => a.r - b.r);
+
+    const n = byDistance.length;
+    const core = byDistance.slice(0, Math.round(n * 0.15));
+    // A band clear of both the core and the far corners (where a Voronoi lattice's largest, most
+    // irregular cells sit) — the commuter belt the spec's "edge" describes.
+    const ring = byDistance.slice(Math.round(n * 0.2), Math.round(n * 0.65));
+    expect(core.length).toBeGreaterThan(0);
+    expect(ring.length).toBeGreaterThan(0);
+
+    const avgRatio = (entries: typeof core): number =>
+      entries.reduce((sum, e) => sum + e.zone.jobs / e.zone.residents, 0) / entries.length;
+
+    const coreRatio = avgRatio(core);
+    const ringRatio = avgRatio(ring);
+    expect(coreRatio).toBeGreaterThan(1); // core: jobs > residents on average
+    expect(ringRatio).toBeLessThan(1); // ring: residents > jobs on average
+    expect(coreRatio).toBeGreaterThan(ringRatio);
+  });
+
+  it('has at least 3 deliberate industrial districts: jobs 4-8x residents, mutually >= 400m apart, each with street access within 400m', () => {
+    const city = generateRiverton(RIVERTON_SEED);
+
+    // "jobs 4-8x residents" per depots-and-timetables.md §1's description of the deliberate
+    // districts — distinct from (and much stronger than) Zoning B's bare eligible() ratio test
+    // below, which only requires jobs > residents.
+    const industrialCandidates = city.zones.filter((z) => z.jobs >= 4 * z.residents && z.jobs <= 8 * z.residents);
+    expect(industrialCandidates.length).toBeGreaterThanOrEqual(3);
+
+    // Also below the density bottom tercile (spec's other half of the same bullet).
+    const densities = city.zones.map((z) => (z.residents + z.jobs) / z.areaHa).sort((a, b) => a - b);
+    const tercileBoundary = densities[Math.floor(densities.length / 3)]!;
+    const inBottomTercile = industrialCandidates.filter((z) => (z.residents + z.jobs) / z.areaHa < tercileBoundary);
+    expect(inBottomTercile.length).toBeGreaterThanOrEqual(3);
+
+    // Mutually >= 400m apart, greedily, in id order — mirrors generateRiverton.ts's own
+    // assertDepotSitingViable so the test independently confirms what the generation-time
+    // assertion already guards.
+    const spaced: Zone[] = [];
+    for (const zone of inBottomTercile) {
+      if (spaced.every((s) => haversineMeters(s.centroid, zone.centroid) >= 400)) spaced.push(zone);
+    }
+    expect(spaced.length).toBeGreaterThanOrEqual(3);
+
+    // Each has a routable road node within 400m of its centroid.
+    for (const zone of spaced.slice(0, 3)) {
+      const hasAccess = city.graph.nodes.some((n) => haversineMeters(n.pos, zone.centroid) <= 400);
+      expect(hasAccess).toBe(true);
+    }
+  });
+
+  it('satisfies depots-and-timetables.md §1\'s Zoning B eligibility (the shared predicate): at least 3 zones pass eligible()', () => {
+    const city = generateRiverton(RIVERTON_SEED);
+    const median = medianZoneDensityPerHa(city.zones);
+    const eligible = city.zones.filter((z) => isDepotEligibleZone(z, median));
+    expect(eligible.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('generation is deterministic across two runs: zones are byte-identical for the same seed', () => {
+    const a = generateRiverton(RIVERTON_SEED);
+    const b = generateRiverton(RIVERTON_SEED);
+    expect(a.zones).toEqual(b.zones);
+  });
+
+  it('produces different zones for a different seed (the lattice jitter actually varies)', () => {
+    const a = generateRiverton(RIVERTON_SEED);
+    const b = generateRiverton(RIVERTON_SEED + 1);
+    expect(a.zones).not.toEqual(b.zones);
   });
 });

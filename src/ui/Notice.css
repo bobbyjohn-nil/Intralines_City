@@ -16,7 +16,9 @@
   display: flex;
   justify-content: center;
   pointer-events: none;
-  z-index: 20;
+  /* Above the draft bar/dock tier (see tokens.css) — the error bus can fire mid-draft and must
+     stay legible even if its band overlaps the draft bar's. */
+  z-index: var(--ui-z-notice);
 }
 
 .notice {

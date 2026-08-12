@@ -2,6 +2,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
+import { configDefaults } from "vitest/config";
 
 export default defineConfig({
   plugins: [
@@ -49,5 +50,12 @@ export default defineConfig({
   ],
   test: {
     environment: "jsdom",
+    // Vitest's `exclude` replaces its own defaults rather than merging with them, so we spread
+    // `configDefaults.exclude` (node_modules, dist, .git, etc.) and add `.claude/**` on top. That
+    // last pattern is what actually matters here: agents sometimes run inside git worktrees under
+    // `.claude/worktrees/<agent-id>/`, which are full copies of this repo — test files included.
+    // Without this, vitest's default glob happily discovers and runs those copies too, double-
+    // counting every test and running half the suite against another agent's in-progress code.
+    exclude: [...configDefaults.exclude, ".claude/**"],
   },
 });
