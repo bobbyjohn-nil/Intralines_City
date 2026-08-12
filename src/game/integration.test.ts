@@ -12,6 +12,7 @@
 import { describe, expect, it } from 'vitest';
 import { generateRiverton, RIVERTON_SEED } from './city/generateRiverton';
 import { createRng } from './city/rng';
+import { DEPOT_MAX_ROAD_ACCESS_M, DEPOT_MIN_SEPARATION_M, isDepotEligibleZone, medianZoneDensityPerHa } from './city/zones';
 import {
   addStop,
   canCreate,
@@ -669,7 +670,7 @@ describe('diagonal avenue: genuinely faster than the equivalent grid route', () 
   });
 });
 
-// ── 7. Depot-zoning readiness (known gap) ────────────────────────────────────────────────────
+// ── 7. Depot-zoning readiness ─────────────────────────────────────────────────────────────────
 
 describe('depot-zoning readiness', () => {
   // studio/docs/design/depots-and-timetables.md §1: "Riverton's generator must emit ... at least
@@ -677,19 +678,45 @@ describe('depot-zoning readiness', () => {
   // its centroid, generated deliberately as industrial districts ... because that is where yards
   // go" — and "a demo city that cannot host a depot is a broken build, not a bad seed."
   //
-  // generateRiverton() today returns { id, name, bounds, graph, scenery: { water, parks }, seed }
-  // (src/game/types.ts's City/Scenery) — there is no zone concept anywhere in src/game (no
-  // `residents`, `jobs`, `areaHa`, no eligibility polygon) for any city, real or procedural. Riverton
-  // cannot satisfy the spec's "at least 3 industrial districts >= 400 m apart" because it has
-  // nothing resembling a zone at all yet. This is a known gap, not a regression: skipped and left
-  // here so the day zoning lands, this test starts failing and has to be filled in for real.
-  it.skip('Riverton emits at least 3 eligible industrial-zone sites, mutually >= 400m apart, each within 400m of a routable road node', () => {
-    // TODO once the generator emits zones (residents/jobs/areaHa per §1's Zoning B formula):
-    //   1. Generate Riverton and read its zone polygons.
-    //   2. Filter to eligible(z): jobs[z] > residents[z] && density[z] < medianDensity(zones) && areaHa[z] >= 1.
-    //   3. Assert at least 3 eligible zones survive.
-    //   4. Assert every pairwise centroid distance among them is >= 400m (haversineMeters, as above).
-    //   5. Assert each has a routable road node (city.graph) within 400m of its centroid.
-    expect(true).toBe(true);
+  // Riverton now generates 96 Voronoi zones (residents/jobs/areaHa/centroid) plus three deliberately
+  // -placed industrial districts, and `generateRiverton()` itself asserts this at generation time
+  // (assertDepotSitingViable, thrown as a build-breaking error if it ever regresses). This test is
+  // the external, black-box half of that guarantee: it reads `city.zones` from the outside and
+  // checks them against the *shared* eligibility predicate — `isDepotEligibleZone` /
+  // `medianZoneDensityPerHa` from `./city/zones` — rather than reimplementing Zoning B's formula
+  // here, so the test and the game can never quietly disagree about what "eligible" means. It also
+  // exercises several seeds beyond RIVERTON_SEED, because the generation-time assertion alone only
+  // ever proves the one seed the game boots with.
+  it('emits at least 3 eligible industrial-zone sites, mutually >= 400m apart, each within 400m of a routable road node, across several seeds', () => {
+    const seeds = [RIVERTON_SEED, 1, 2, 3, 7, 100];
+    const eligibleCounts: number[] = [];
+
+    for (const seed of seeds) {
+      const city = generateRiverton(seed);
+      const medianDensityPerHa = medianZoneDensityPerHa(city.zones);
+      const eligible = city.zones.filter((z) => isDepotEligibleZone(z, medianDensityPerHa));
+      eligibleCounts.push(eligible.length);
+
+      expect(eligible.length, `seed ${seed}: expected >= 3 eligible zones`).toBeGreaterThanOrEqual(3);
+
+      for (let i = 0; i < eligible.length; i++) {
+        for (let j = i + 1; j < eligible.length; j++) {
+          const distM = haversineMeters(eligible[i]!.centroid, eligible[j]!.centroid);
+          expect(distM, `seed ${seed}: zones ${eligible[i]!.id} and ${eligible[j]!.id} are ${distM.toFixed(1)}m apart`).toBeGreaterThanOrEqual(
+            DEPOT_MIN_SEPARATION_M
+          );
+        }
+      }
+
+      for (const zone of eligible) {
+        const nearestNodeM = Math.min(...city.graph.nodes.map((n) => haversineMeters(n.pos, zone.centroid)));
+        expect(nearestNodeM, `seed ${seed}: zone ${zone.id} nearest road node is ${nearestNodeM.toFixed(1)}m away`).toBeLessThanOrEqual(
+          DEPOT_MAX_ROAD_ACCESS_M
+        );
+      }
+    }
+
+    // Sanity check on the loop itself: every seed actually contributed a measurement.
+    expect(eligibleCounts).toHaveLength(seeds.length);
   });
 });

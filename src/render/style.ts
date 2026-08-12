@@ -224,10 +224,41 @@ export const BUS_MARKER_WIDTH_MAX_PX = 20;
  * and every `LINE_COLOR_MIX_STOPS` entry blends among `blue`/`red`/`amber`/`ink` but never
  * touches `muted` — so a bus body can't land on the same hue axis as a road or a route line by
  * construction. Fixes the collision where this used to equal `ROAD_COLOR_MIX.primary` (both 0.15
- * on the ink→muted axis), making a bus body and a primary road numerically the same color. TUNE
+ * on the ink→muted axis), making a bus body and a primary road numerically the same color.
+ *
+ * Raised from 0.5 to 0.65 (second playtest fix — the first, `BUS_MARKER_*_MIN_PX`, made the
+ * marker the right *size* but did nothing about a second, independent bug: the fill alone, with no
+ * stroke, sat too close to the paper background once the night tint (`NIGHT_ALPHA_MAX`,
+ * `timeOfDay.ts`) darkens paper toward it — `drawBuses` now also strokes the body in `--ink`,
+ * matching `drawStops`'s fill-plus-stroke idiom, but the fill was retuned too since the stroke
+ * alone doesn't fix the fill's weakest pairing (see below). 0.65 was chosen as the maximin point
+ * across every pair this body color must stay clear of at once — pushing it further toward `amber`
+ * keeps gaining separation from roads and route lines but *loses* separation from the night-tinted
+ * paper (amber is close in lightness to paper; the night tint doesn't touch overlay colors, only
+ * the basemap under them, so a lighter fill closes that gap), while pulling it back toward `muted`
+ * does the opposite and risks approaching `ROAD_COLOR_MIX.living_street` (pure `muted`) again. RGB
+ * distances at this value (measured, not estimated — see `drawOverlays.test.ts`'s bus-color
+ * regression and the render task's numeric defense): ~106 from paper at noon, ~52 from paper under
+ * the night tint, ~126 from the nearest road class (`living_street`), ~56 from the nearest route
+ * line color (`amber`→`ink` @ 0.4, the closest of the eight `LINE_COLOR_MIX_STOPS` entries). TUNE
  */
-export const BUS_BODY_COLOR_MIX = 0.5;
+export const BUS_BODY_COLOR_MIX = 0.65;
 
 /** Width of the full-length line-color stripe drawn down the bus marker's body, screen pixels.
  * TUNE */
 export const BUS_STRIPE_WIDTH_PX = 2;
+
+/**
+ * Bus marker outline stroke width, as a fraction of `busMarkerWidthPx(viewport)` — the marker's own
+ * zoom-scaled width, not a fixed screen-pixel value. This is the same lesson the original
+ * `BUS_MARKER_*_MIN_PX`/`_MAX_PX` sizing fix already encoded (a fixed-pixel marker vanished at the
+ * default fit-to-bounds zoom): a fixed-pixel stroke would do the same thing in miniature, staying
+ * visually heavy when the marker is at its `_MAX_PX` ceiling and disappearing to a hairline (or
+ * over-dominating a tiny triangle) when it's at its `_MIN_PX` floor. Deriving it from `widthPx`
+ * instead means it inherits the same clamp-then-scale response for free. At the width floor
+ * (`BUS_MARKER_WIDTH_MIN_PX`, 10px) this is 2px; at the ceiling (`BUS_MARKER_WIDTH_MAX_PX`, 20px)
+ * it's 4px — always a clearly visible ring around the fill, following `drawStops`'s established
+ * fill-plus-stroke idiom (`STOP_OUTLINE_WIDTH_PX`) rather than inventing a new treatment; stroked in
+ * `--ink`, same color `drawStops` already strokes with. TUNE
+ */
+export const BUS_STROKE_WIDTH_RATIO = 0.2;

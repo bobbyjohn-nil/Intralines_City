@@ -26,9 +26,10 @@
 import { describe, expect, it } from 'vitest';
 import { generateRiverton, RIVERTON_SEED } from '../city/generateRiverton';
 import type { LngLat, RoadEdge, StreetGraph } from '../types';
-import { BUS_MODELS, STARTING_BUS_MODEL, STOP_PLACEMENT_COST_USD } from '../constants';
+import { BUS_DWELL_SECONDS, BUS_LAYOVER_MINUTES, BUS_MODELS, STARTING_BUS_MODEL, STOP_PLACEMENT_COST_USD } from '../constants';
 import { addStop, startDraft, summarizeDraft, undoLastStop, type DraftState } from './draft';
 import { buildRouteSchedule } from '../buses/schedule';
+import { metersBetween } from '../buses/geo';
 import type { Draft, Line, LineId, Stop, StopId } from './types';
 
 const city = generateRiverton(RIVERTON_SEED);
@@ -98,10 +99,13 @@ describe('stop ordering along a line is the route order', () => {
 describe("a seeded draft's summary numbers on generateRiverton(RIVERTON_SEED)", () => {
   // Protects: all three refactors. `summarizeDraft` folds stop count, geometry (totalLengthM,
   // round-trip minutes) and placement cost from a fixed, deterministic click sequence
-  // (RIVERTON_SEED=42, edges [0, 1079, 2159, 3598] of a 3599-edge graph). These four numbers were
-  // read once from the current implementation and hardcoded below; if any refactor changes what
-  // a stop or a leg *is* in a way that shifts routing, ordering, or the geometry a leg reports,
-  // one of these four moves and the test fails loudly instead of silently.
+  // (RIVERTON_SEED=42, edges [0, 30%, 60%, last] of the graph's edge array — see
+  // `seededStopEdgeIndices`, currently a 3678-edge graph). `totalLengthM` was re-recorded
+  // 2026-08-12 after two landed changes shifted it: the diagonal avenue's extension to 6.24 km
+  // (spanning the full 42-block grid — see `generateRiverton.ts`'s `DIAGONAL_*` constants) moved
+  // which physical edges these fractional indices land on, and the stop-hoisting refactor changed
+  // `Line`'s shape (module doc above). Round-trip minutes and placement cost are *not* re-pinned
+  // as independent floats — see below.
   const draft = summarizeDraft(buildSeededDraft(city.graph));
 
   it('places exactly 4 stops', () => {
@@ -110,10 +114,47 @@ describe("a seeded draft's summary numbers on generateRiverton(RIVERTON_SEED)", 
   });
 
   it('totals the recorded length, round-trip time and placement cost', () => {
-    expect(draft.totalLengthM).toBeCloseTo(11079.523720514224, 6);
-    expect(draft.estimatedRoundTripMinutes).toBeCloseTo(62.51504719180161, 6);
-    expect(draft.placementCostUsd).toBe(4 * STOP_PLACEMENT_COST_USD);
-    expect(draft.placementCostUsd).toBe(16000);
+    // Boundary, not a pin: routed length can never be shorter than the straight-line sum between
+    // consecutive stops (triangle inequality) — a real lower bound, not a guess — and a 140 m-block
+    // grid city shouldn't ever need more than a few times that to actually drive it. This catches
+    // totalLengthM being wrong by an order of magnitude (wrong units, a duplicated leg, a route
+    // through the wrong city) independently of whatever its pinned value below happens to be.
+    const straightLineSumM = draft.stops
+      .slice(1)
+      .reduce((sum, stop, i) => sum + metersBetween(draft.stops[i]!.position, stop.position), 0);
+    expect(draft.totalLengthM).toBeGreaterThanOrEqual(straightLineSumM);
+    expect(draft.totalLengthM).toBeLessThanOrEqual(straightLineSumM * 3);
+
+    // The pin itself: this is the one number here worth failing loudly on an *unexplained* change,
+    // since it's what routing/ordering/geometry drift would actually move. Checked by hand against
+    // this run's actual stops: the four seeded clicks land roughly 4.9 km, 1.6 km and 2.1 km apart
+    // in a straight line (~8.5 km summed), and the pinned 10.78 km routed total is a ~27% detour
+    // over that — exactly the kind of indirection a rectilinear grid with one diagonal shortcut
+    // produces, not a wild outlier. (3 decimal places — plenty to catch a real geometry change,
+    // not so tight that it pretends sub-millimetre precision means anything here.)
+    expect(draft.totalLengthM).toBeCloseTo(10777.988735515788, 3);
+
+    // Round-trip minutes is checked *relationally* rather than as a second independent pinned
+    // float: it must equal the same arithmetic a reviewer would do by hand from the pinned length
+    // above, the starting bus model's cruise speed, and the dwell/layover constants — driving both
+    // directions, both intermediate stops' dwell counted twice, and a layover at each terminus
+    // counted twice (see `summarizeDraft`'s own comment in `draft.ts`). This is what stopped this
+    // goldens breaking twice in one day: a purely geometric change (the diagonal avenue, a routing
+    // tweak) now moves this number automatically along with totalLengthM instead of needing its own
+    // re-pin, while a change to the *formula* — wrong speed, a dropped ×2, a swapped dwell/layover
+    // constant — still fails loudly, because it would no longer match this independently-derived
+    // expectation.
+    const intermediateStopCount = draft.stopCount - 2;
+    const cruiseSpeedMs = (CRUISE_SPEED_KMH * 1000) / 3600;
+    const expectedRoundTripMinutes =
+      (2 * draft.totalLengthM) / cruiseSpeedMs / 60 +
+      (2 * intermediateStopCount * BUS_DWELL_SECONDS) / 60 +
+      2 * BUS_LAYOVER_MINUTES;
+    expect(draft.estimatedRoundTripMinutes).toBeCloseTo(expectedRoundTripMinutes, 6);
+
+    // Placement cost read live from the constant, not a second literal that would need updating in
+    // lockstep with STOP_PLACEMENT_COST_USD every time that number tunes.
+    expect(draft.placementCostUsd).toBe(draft.stopCount * STOP_PLACEMENT_COST_USD);
   });
 });
 

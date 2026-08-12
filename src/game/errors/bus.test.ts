@@ -19,14 +19,34 @@ function spySink(): { sink: ErrorSink; calls: Array<{ entry: ErrorLogEntry; noti
   return { sink, calls };
 }
 
+// The bus's built-in console sink (`consoleSink` in `bus.ts`) is always-on by design — see that
+// file's module doc — and every test here goes through `report()`, so every one of them also
+// exercises it. That's correct (it's the dedup/throttle behaviour under test firing exactly as
+// specified), but left unstubbed it floods the suite's real output with dozens of
+// `[save/quota] ... ×N` lines, one per `report()` call across all 214-repeat tests. Stubbing
+// `console.error`/`warn`/`info` here silences that without touching `bus.ts` — the sink itself
+// still runs and still gets called with the right arguments, this just stops it writing to the
+// terminal. `registerSink`'s own spy (`spySink`/`calls` below) is a separate, pluggable sink and
+// is never affected by this stub, so every existing assertion on dedup/notify still exercises the
+// real thing.
+let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+let consoleWarnSpy: ReturnType<typeof vi.spyOn>;
+let consoleInfoSpy: ReturnType<typeof vi.spyOn>;
+
 beforeEach(() => {
   resetErrorBusForTests();
   vi.useFakeTimers();
   vi.setSystemTime(0);
+  consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  consoleInfoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
 });
 
 afterEach(() => {
   vi.useRealTimers();
+  consoleErrorSpy.mockRestore();
+  consoleWarnSpy.mockRestore();
+  consoleInfoSpy.mockRestore();
 });
 
 describe('dedup — one row per source/code', () => {
@@ -182,7 +202,10 @@ describe('severity — note never toasts', () => {
 
 describe('sink safety', () => {
   it('drops a throwing sink for the rest of the session without surfacing to the caller', () => {
-    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // `console.error` is already stubbed by the module-level `beforeEach` above (it would fire
+    // twice here anyway: once for `[errors] a sink threw...`, once for the STORAGE_FULL report's
+    // own consoleSink line if severity were 'fatal' — it isn't, but the throw-drop message alone
+    // is enough noise to want silenced).
     const throwingSink: ErrorSink = () => {
       throw new Error('boom');
     };
@@ -193,12 +216,14 @@ describe('sink safety', () => {
 
     expect(() => report(STORAGE_FULL)).not.toThrow();
     expect(calls).toHaveLength(1); // the good sink still got it
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      '[errors] a sink threw and was dropped for the rest of the session',
+      expect.any(Error)
+    );
 
     // Second report — the throwing sink should no longer be invoked at all (already dropped).
     vi.setSystemTime(200_000);
     expect(() => report(STORAGE_FULL)).not.toThrow();
     expect(calls).toHaveLength(2);
-
-    consoleErrorSpy.mockRestore();
   });
 });

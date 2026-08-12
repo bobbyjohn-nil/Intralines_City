@@ -37,6 +37,7 @@ import {
   BUS_MARKER_WIDTH_MAX_PX,
   BUS_MARKER_WIDTH_MIN_PX,
   BUS_STRIPE_WIDTH_PX,
+  BUS_STROKE_WIDTH_RATIO,
   BUS_WIDTH_M,
   DRAFT_RUBBER_BAND_DASH_PATTERN,
   DRAFT_RUBBER_BAND_WIDTH_PX,
@@ -138,6 +139,14 @@ export function busMarkerLengthPx(viewport: Viewport): number {
  * testing. */
 export function busMarkerWidthPx(viewport: Viewport): number {
   return clamp(BUS_WIDTH_M * viewport.scale(), BUS_MARKER_WIDTH_MIN_PX, BUS_MARKER_WIDTH_MAX_PX);
+}
+
+/** Bus marker outline stroke width at a given marker `widthPx` — always `BUS_STROKE_WIDTH_RATIO`
+ * of it, so the stroke scales with the marker's own zoom response instead of being a fixed pixel
+ * value (see `BUS_STROKE_WIDTH_RATIO`'s doc comment for why a fixed pixel value repeats the
+ * original size bug). Pure — exported for testing. */
+export function busStrokeWidthPx(widthPx: number): number {
+  return widthPx * BUS_STROKE_WIDTH_RATIO;
 }
 
 // ── Bus marker geometry ──────────────────────────────────────────────────────
@@ -368,11 +377,13 @@ function drawRubberBand(
 
 // ── Buses ────────────────────────────────────────────────────────────────────
 
-/** One bus per `busPositionAt` call, oriented triangle body in the "brand" color plus a
- * full-length stripe in the line's color down its centerline (SPEC, `studio/GAME.md`: "Buses
- * wear the company brand color with a full-length stripe in the line's color"). Reuses
- * `busPositionScratch` and `busMarkerScratch` across every bus, every line, every frame — never
- * allocates in this loop. */
+/** One bus per `busPositionAt` call, oriented triangle body in the "brand" color, outlined in
+ * `--ink` (the same fill-plus-stroke idiom `drawStops` uses — see `BUS_STROKE_WIDTH_RATIO`'s doc
+ * comment for why the outline is what actually makes the marker read against paper and roads,
+ * not just the fill), plus a full-length stripe in the line's color down its centerline (SPEC,
+ * `studio/GAME.md`: "Buses wear the company brand color with a full-length stripe in the line's
+ * color"). Reuses `busPositionScratch` and `busMarkerScratch` across every bus, every line, every
+ * frame — never allocates in this loop. */
 function drawBuses(
   ctx: CanvasRenderingContext2D,
   viewport: Viewport,
@@ -385,6 +396,7 @@ function drawBuses(
   // keeps the per-bus loop below to pure arithmetic on already-clamped numbers.
   const lengthPx = busMarkerLengthPx(viewport);
   const widthPx = busMarkerWidthPx(viewport);
+  const strokeWidthPx = busStrokeWidthPx(widthPx);
 
   for (const entry of schedules) {
     if (entry.busCount <= 0) continue;
@@ -404,6 +416,10 @@ function drawBuses(
       ctx.closePath();
       ctx.fillStyle = bodyColor;
       ctx.fill();
+      ctx.strokeStyle = palette.ink;
+      ctx.lineWidth = strokeWidthPx;
+      ctx.lineJoin = 'round';
+      ctx.stroke();
 
       ctx.beginPath();
       ctx.moveTo((marker.leftX + marker.rightX) / 2, (marker.leftY + marker.rightY) / 2);

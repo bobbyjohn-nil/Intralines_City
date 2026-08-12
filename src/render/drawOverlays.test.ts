@@ -1,20 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import type { PaperPalette } from './paperPalette';
+import { mixHex, type PaperPalette } from './paperPalette';
 import {
   busMarkerLengthPx,
   busMarkerWidthPx,
+  busStrokeWidthPx,
   computeBusMarkerPoints,
   createBusMarkerPointsScratch,
   getLineColor,
   pointerMovedPastClickThreshold,
   stopRadiusPx,
 } from './drawOverlays';
+import { getTimeOfDayTint } from './timeOfDay';
 import { MAX_ZOOM, MIN_ZOOM, Viewport } from './projection';
 import {
+  BUS_BODY_COLOR_MIX,
   BUS_MARKER_LENGTH_MAX_PX,
   BUS_MARKER_LENGTH_MIN_PX,
   BUS_MARKER_WIDTH_MAX_PX,
   BUS_MARKER_WIDTH_MIN_PX,
+  BUS_STROKE_WIDTH_RATIO,
+  LINE_COLOR_MIX_STOPS,
+  ROAD_COLOR_MIX,
   STOP_RADIUS_MAX_PX,
 } from './style';
 
@@ -36,6 +42,38 @@ const PALETTE: PaperPalette = {
   amber: '#ffe9a8',
   red: '#c94f35',
 };
+
+/** Parses the `rgb(r, g, b)` / `rgba(r, g, b, a)` strings `mixHex`/`getTimeOfDayTint` return, into
+ * plain `[r, g, b]` components — the RGB-distance regression tests below need to compare actual
+ * rendered colors, not the hex/mix inputs that produced them. */
+function parseRgb(css: string): readonly [number, number, number] {
+  const match = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(css);
+  if (!match) throw new Error(`not an rgb()/rgba() string: ${css}`);
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+/** Straight-line RGB distance — the same metric `studio/GAME.md`'s "playtest fix notes" already
+ * use elsewhere in this codebase (see `ROAD_COLOR_MIX`'s and `PARK_COLOR_MIX_T`'s doc comments in
+ * `style.ts`) to defend a color choice numerically instead of by eye. */
+function rgbDistance(a: readonly [number, number, number], b: readonly [number, number, number]): number {
+  return Math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2);
+}
+
+/** `paper` composited under the deepest night tint (`getTimeOfDayTint` at minute 0, which the
+ * keyframe table holds at `NIGHT_ALPHA_MAX` — see `timeOfDay.ts`), the same "over" alpha compositing
+ * `ctx.fillRect` with an `rgba(...)` fill actually performs. Buses are drawn as an overlay *after*
+ * this tint rect (see `drawOverlays.ts`'s module comment on draw order), so a bus's own colors are
+ * never tinted — only the paper/road backdrop it must stay visible against darkens. */
+function paperUnderNightTint(palette: PaperPalette): readonly [number, number, number] {
+  const paper = parseRgb(mixHex(palette.paper, palette.paper, 0));
+  const tint = getTimeOfDayTint(0, palette);
+  const [tr, tg, tb] = parseRgb(tint.color);
+  const a = tint.alpha;
+  return [tr * a + paper[0] * (1 - a), tg * a + paper[1] * (1 - a), tb * a + paper[2] * (1 - a)];
+}
+
+const busBodyColor = parseRgb(mixHex(PALETTE.muted, PALETTE.amber, BUS_BODY_COLOR_MIX));
+const busStrokeColor = parseRgb(mixHex(PALETTE.ink, PALETTE.ink, 0)); // == palette.ink, as rgb(...)
 
 describe('pointerMovedPastClickThreshold', () => {
   const THRESHOLD_PX = 6;
@@ -161,6 +199,102 @@ describe('busMarkerLengthPx / busMarkerWidthPx', () => {
   it('the bus marker length floor alone (independent of any particular zoom) already exceeds the ' +
     'largest a stop marker can ever get, guaranteeing the ordering holds at every zoom', () => {
     expect(BUS_MARKER_LENGTH_MIN_PX).toBeGreaterThan(STOP_RADIUS_MAX_PX * 2);
+  });
+});
+
+describe('busStrokeWidthPx', () => {
+  // Regression coverage for the second, independent defect the sizing fix above did not touch:
+  // `drawBuses` used to fill the bus triangle and never stroke it at all. `drawStops`'s established
+  // fill-plus-stroke idiom is what actually makes a marker read against a variety of backdrops
+  // (paper, roads, route lines) — a stroke with no zoom response would just be `BUS_MARKER_*_PX`'s
+  // original bug in miniature, so this must scale with the already-zoom-responsive marker width,
+  // not be a fixed screen-pixel constant.
+
+  it('scales linearly with the marker width it is derived from', () => {
+    expect(busStrokeWidthPx(10)).toBeCloseTo(10 * BUS_STROKE_WIDTH_RATIO, 6);
+    expect(busStrokeWidthPx(20)).toBeCloseTo(20 * BUS_STROKE_WIDTH_RATIO, 6);
+    expect(busStrokeWidthPx(0)).toBe(0);
+  });
+
+  it('is a sane fraction of the marker — visible but never dominating the fill', () => {
+    // Neither a hairline (illegible) nor thick enough to swallow the body fill it is meant to
+    // outline.
+    expect(BUS_STROKE_WIDTH_RATIO).toBeGreaterThan(0.05);
+    expect(BUS_STROKE_WIDTH_RATIO).toBeLessThan(0.5);
+  });
+
+  it('inherits the marker width\'s zoom response — grows monotonically across the zoom range, ' +
+    'never a fixed pixel value', () => {
+    let previous = busStrokeWidthPx(busMarkerWidthPx(viewportAtZoom(MIN_ZOOM)));
+    for (let zoom = MIN_ZOOM; zoom <= MAX_ZOOM; zoom += 0.5) {
+      const strokeWidth = busStrokeWidthPx(busMarkerWidthPx(viewportAtZoom(zoom)));
+      expect(strokeWidth).toBeGreaterThanOrEqual(previous - 1e-9);
+      previous = strokeWidth;
+    }
+  });
+
+  it('spans the same min/max ratio as BUS_MARKER_WIDTH_MIN_PX/_MAX_PX at the zoom extremes', () => {
+    expect(busStrokeWidthPx(busMarkerWidthPx(viewportAtZoom(MIN_ZOOM))))
+      .toBeCloseTo(BUS_MARKER_WIDTH_MIN_PX * BUS_STROKE_WIDTH_RATIO, 6);
+    expect(busStrokeWidthPx(busMarkerWidthPx(viewportAtZoom(MAX_ZOOM))))
+      .toBeCloseTo(BUS_MARKER_WIDTH_MAX_PX * BUS_STROKE_WIDTH_RATIO, 6);
+  });
+});
+
+describe('bus colors are actually visible (regression: the fill-only bus used to sit a few RGB ' +
+  'units from paper, invisible in every screenshot two playtests took)', () => {
+  // Thresholds are well below the measured values (see the render task's numeric defense: ~106
+  // units from paper at noon, ~52 under the night tint, ~126 from the nearest road class, ~56 from
+  // the nearest route line color, ~245 between the stroke and the fill) — enough headroom that a
+  // future palette or mix-ratio tweak doesn't make this flaky, but a regression back toward "a few
+  // RGB units" fails loudly.
+  const MIN_PAPER_DISTANCE_NOON = 60;
+  const MIN_PAPER_DISTANCE_NIGHT = 35;
+  const MIN_ROAD_DISTANCE = 80;
+  const MIN_LINE_DISTANCE = 40;
+  const MIN_STROKE_VS_FILL_DISTANCE = 100;
+
+  it('the bus body fill differs from the paper background at noon by more than the threshold', () => {
+    const paperNoon = parseRgb(mixHex(PALETTE.paper, PALETTE.paper, 0));
+    expect(rgbDistance(busBodyColor, paperNoon)).toBeGreaterThan(MIN_PAPER_DISTANCE_NOON);
+  });
+
+  it('the bus body fill differs from the paper background under the night tint by more than the ' +
+    'threshold — the night tint darkens paper toward the fill, so this is the tighter of the two', () => {
+    const paperNight = paperUnderNightTint(PALETTE);
+    expect(rgbDistance(busBodyColor, paperNight)).toBeGreaterThan(MIN_PAPER_DISTANCE_NIGHT);
+  });
+
+  it('the ink stroke differs from paper (noon and night) by a wide margin — the outline always reads', () => {
+    const paperNoon = parseRgb(mixHex(PALETTE.paper, PALETTE.paper, 0));
+    const paperNight = paperUnderNightTint(PALETTE);
+    expect(rgbDistance(busStrokeColor, paperNoon)).toBeGreaterThan(MIN_PAPER_DISTANCE_NOON * 2);
+    expect(rgbDistance(busStrokeColor, paperNight)).toBeGreaterThan(MIN_PAPER_DISTANCE_NIGHT * 2);
+  });
+
+  it('the bus stroke differs from the bus fill — a hard edge frames the marker, following ' +
+    'drawStops\'s fill-plus-stroke idiom', () => {
+    expect(rgbDistance(busStrokeColor, busBodyColor)).toBeGreaterThan(MIN_STROKE_VS_FILL_DISTANCE);
+  });
+
+  it('the bus body fill differs from every road class it can be drawn over, at noon', () => {
+    for (const t of Object.values(ROAD_COLOR_MIX)) {
+      const roadColor = parseRgb(mixHex(PALETTE.ink, PALETTE.muted, t));
+      expect(rgbDistance(busBodyColor, roadColor)).toBeGreaterThan(MIN_ROAD_DISTANCE);
+    }
+  });
+
+  it('the bus body fill differs from every route line color it can be drawn over', () => {
+    for (const [from, to, t] of LINE_COLOR_MIX_STOPS) {
+      const lineColor = parseRgb(mixHex(PALETTE[from], PALETTE[to], t));
+      expect(rgbDistance(busBodyColor, lineColor)).toBeGreaterThan(MIN_LINE_DISTANCE);
+    }
+  });
+
+  it('the bus body fill differs from a stop marker\'s fill (--panel) — size and shape also carry ' +
+    'this distinction, but the color itself is not a near-match either', () => {
+    const panel = parseRgb(mixHex(PALETTE.panel, PALETTE.panel, 0));
+    expect(rgbDistance(busBodyColor, panel)).toBeGreaterThan(MIN_ROAD_DISTANCE);
   });
 });
 
