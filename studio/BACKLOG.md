@@ -17,7 +17,9 @@ the game runnable.
 
 Goal: a bus drives a line you drew, on a fake city, and it costs money. No real data, no depth.
 
-- [ ] Bus motion — accelerate 1.1 m/s², brake 1.3, 20 s dwell, schedule as a pure function of the clock
+**Milestone 1 is complete and committed (`c489047`).** Skeleton, Riverton, map render, clock, line
+drawing, bus motion and the money floor all ship and are verified in a browser. Everything below is
+follow-up work found while building it.
 
 **Found while verifying the first playable build (2026-08-12):**
 
@@ -34,10 +36,13 @@ Goal: a bus drives a line you drew, on a fake city, and it costs money. No real 
 
 ### Milestone 2 — it's a game
 
+- [ ] **Blocks depots entirely:** Riverton has no zones. `generateRiverton()` returns no `residents`/`jobs`/`areaHa` concept at all, so the census fallback in [depots-and-timetables.md](docs/design/depots-and-timetables.md) §1 has nothing to test eligibility against — the demo city has **no legal depot site on turn one**. Needs zone polygons plus ≥3 planted industrial districts ≥400 m apart with road access, and a generation-time assertion that fails the build if fewer than 3 survive. Documented as a skipped test in `src/game/integration.test.ts`
+
 Goal: riders decide whether to ride, and the decision is legible.
 
 - [ ] Save envelope — implement to [save-format.md](docs/design/save-format.md). Envelope, the 8-step ordered check, empty migration chain, stable ids, position-anchored stops
 - [ ] **Do before the save envelope:** hoist stops out of `Line`. `Line.stops` nests `Stop` objects, so a stop shared by two lines is duplicated — becomes a top-level `stops[]` with `line.stopIds[]`. Connectability scoring (§18) needs this shape anyway, and every day it waits is more code to change
+- [ ] **Do before the save envelope:** `Stop` needs a persisted `roadClass` plus derived `orphaned`/`movedM`, and the re-anchor constants (2 m / 3 m / 12 m / 30 m / 40 m / 15 m) belong in `constants.ts`. Per [save-format.md](docs/design/save-format.md) §5
 - [ ] **Do before the save envelope:** stable ids everywhere. Stops and lines are array indices today, which do not survive removal or reordering. Monotonic never-reused ids from a persisted counter
 - [ ] Demand model — gravity O–D table, 650 m walk, mode-choice logit, captive riders
 - [ ] Timetables — Normal mode (bus counts → headway), service hours, 2-min headway floor

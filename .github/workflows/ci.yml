@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies (npm ci)
+        run: npm ci
+
+      - name: Typecheck (tsc -b)
+        run: npx tsc -b
+
+      - name: Test (vitest run)
+        run: npx vitest run
+
+      - name: Build (production build, includes service worker)
+        run: npm run build
+
+      - name: Report gzipped bundle size
+        run: |
+          total=0
+          echo "File sizes (gzipped):"
+          while IFS= read -r f; do
+            sz=$(gzip -c "$f" | wc -c)
+            total=$((total + sz))
+            printf '  %8d bytes  %s\n' "$sz" "$f"
+          done < <(find dist -type f | sort)
+          kb=$(awk "BEGIN { printf \"%.2f\", $total / 1024 }")
+          echo ""
+          echo "Total production bundle (gzipped): ${total} bytes (~${kb} KB)"
+          echo "Budget: ~20 MB. Baseline: ~70 KB."

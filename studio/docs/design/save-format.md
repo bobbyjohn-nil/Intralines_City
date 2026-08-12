@@ -8,10 +8,10 @@ so the loop never stops for a save step.
 
 ## 1. The envelope
 
-Everything written to storage or exported is one JSON object — `{ format, gameVersion, cityId, companyName, sandbox, savedAtMs,
-data }` — and nothing else is ever at a save key. `format` (SAVE_FORMAT integer from 1, bumped only for a breaking change, §3)
-and `savedAtMs` (`Date.now()`, for the Saves tab) are top-level so a refusal never depends on understanding `data` **[call]**.
-`gameVersion` is display-only and never branched on, `cityId` is a stable slug, `companyName` ≤ 32 chars, `sandbox` permanent (§4).
+Everything written to storage or exported is one JSON object — `{ format, gameVersion, cityId, companyName, sandbox, savedAtMs, data }` —
+and nothing else is ever at a save key. `format` (SAVE_FORMAT integer from 1, bumped only for a breaking change, §3) and `savedAtMs`
+(`Date.now()`) are top-level so a refusal never depends on understanding `data` **[call]**; `gameVersion` is display-only and never branched
+on, `cityId` a stable slug, `companyName` ≤ 32 chars, `sandbox` permanent for the company (§4).
 
 **Ordered check sequence on open.** First failure decides the outcome and stops. Steps 6–8 run on a throwaway copy; the stored
 string is untouched until the first successful autosave *after* a clean load.
@@ -60,9 +60,8 @@ source of truth that disagrees the day a constant is tuned, and that is how save
 
 **Persisted (`SaveData`)**
 
-- `clock.totalMinutes` (b), `speedIndex`. **Not** `paused` — entering a city always starts paused (SPEC §5).
-- `company`: `brandColor`, `foundedAtMs`, `howToPlaySeen`. `city`: `seed` plus the pack identity `packFormat` / `packBuild` /
-  `packHash` (§5.4).
+- `clock.totalMinutes` (b), `speedIndex` — **not** `paused`, since entering a city always starts paused (SPEC §5). `company`:
+  `brandColor`, `foundedAtMs`, `howToPlaySeen`. `city`: `seed` plus the pack identity `packFormat` / `packBuild` / `packHash` (§5.4).
 - `stops[]`: `id`, `name`, `position: LngLat`, `roadClass`, `tier`, `orphanAcknowledged`. **Not** `edgeId`/`edgeT` — §5.1.
 - `lines[]`: `id`, `name`, `color`, `stopIds[]` (order = travel order), `fareCents`, `timetable` (mode + headway),
   `assignedBusIds[]`. **Not** `legs`, **not** `totalLengthM`.
@@ -78,10 +77,9 @@ source of truth that disagrees the day a constant is tuned, and that is how save
 - `City.graph`/`scenery`/`bounds` — from the IndexedDB pack, or regenerated from `seed`.
 - `Stop.edgeId`/`edgeT` (`lines/types.ts`) — rebuilt by the §5.2 pass. `RouteLeg[]`, `totalLengthM`, `isExpress` — re-routed
   between consecutive stops, one A* per leg.
-- Schedules, bus positions, dwell/layover/refuel phase, fuel level — a pure function of `totalMinutes` (GAME.md: "saves and
-  reloads never teleport a bus").
-- O–D tables, rider assignment, waiting, crowding, satisfaction, coverage, connectability; `CalendarTime`; credit score and band
-  (§17); all UI state — selection, panels, drafts, camera.
+- Schedules, bus positions, dwell/layover/refuel phase and fuel level — a pure function of `totalMinutes` (GAME.md: "saves and reloads never
+  teleport a bus"). O–D tables, rider assignment, waiting, crowding, satisfaction, coverage, connectability; `CalendarTime`; credit score
+  and band (§17); all UI state — selection, panels, drafts, camera.
 
 ## 5. Identity and stability
 
@@ -170,13 +168,12 @@ could not be saved. Export a save from Finance."* (SPEC §20). The stored save s
 
 ## 8. The Milestone 2 cut
 
-Ship first (roughly a day): the envelope at `SAVE_FORMAT = 1` and the full §1 sequence including the `NEWER` refusal and the
-`UNREADABLE` backup; `readSave` with defaults-on-read plus an **empty** `MIGRATIONS` array carrying the contributor rule in a
-comment; persistence of clock minutes, company, city seed and pack identity, stops, lines, depots, buses, treasury + carry,
-`nextIds`, with §4's derived list rebuilt; stable ids, the §5.2 re-anchor pass and the §5.3 orphan dialog; autosave on
-action-debounce + `pagehide`. Defer `reports`/`ledgerHistory`/`transactions`, loans and staff, IndexedDB pack eviction (the demo
-city is generated, not packed), quota ladder steps 1–2, export/import UI, multi-tab locking.
+Ship first (roughly a day): the envelope at `SAVE_FORMAT = 1` and the full §1 sequence including the `NEWER` refusal and the `UNREADABLE`
+backup; `readSave` with defaults-on-read plus an **empty** `MIGRATIONS` array carrying the contributor rule in a comment; persistence of
+clock minutes, company, city seed and pack identity, stops, lines, depots, buses, treasury + carry, `nextIds`, with §4's derived list
+rebuilt; stable ids, the §5.2 re-anchor pass and the §5.3 orphan dialog; autosave on action-debounce + `pagehide`. Defer
+`reports`/`ledgerHistory`/`transactions`, loans and staff, pack eviction, quota ladder steps 1–2, export/import UI, multi-tab locking.
 
-**Cut line at half the time:** drop export/import and the quota ladder, and reduce §5.3 to one error-bus toast naming the
-unplaced stops and their lines. Do **not** drop the `NEWER` refusal, the unreadable-backup, stable ids, or the re-anchor pass —
-those four are the whole reason to spec this before there are riders.
+**Cut line at half the time:** drop export/import and the quota ladder, and reduce §5.3 to one error-bus toast naming the unplaced stops and
+their lines. Do **not** drop the `NEWER` refusal, the unreadable-backup, stable ids, or the re-anchor pass — those four are the whole reason
+to spec this before there are riders.

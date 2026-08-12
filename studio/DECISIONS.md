@@ -275,6 +275,62 @@ and it inverts to $0.68 vs $1.27 — **the subsidy is the entire reason**, exact
 funding. It stays a genuine decision rather than a dominant strategy because it is corridor-dependent:
 where the bus badly beats the car, high fares extract more.
 
+**41. A stop is anchored to a place, not to an edge id** (2026-08-12)
+Saved stops record `(lng, lat, roadClass)` and re-anchor to the rebuilt graph on load. `edgeId`/`edgeT`
+are derived-and-rebuilt, in the same category as schedules and bus positions.
+*Why `roadClass` is part of the anchor:* it breaks ties when two candidate edges sit at similar
+distance, and stops a residential-street stop silently migrating onto an arterial that a later OSM
+extract widened. A stop that cannot re-anchor is kept and flagged `orphaned` — **never deleted**. An
+agency does not quietly drop a stop from a timetable, and neither does this game.
+
+**42. `contentHash` is promoted from diagnostic to load-bearing — for saves only** (2026-08-12)
+The pack spec defines `contentHash` as diagnostic and never lets it gate pack loading. The save spec
+needs it, because `packFormat` alone cannot detect a fresh OSM vintage baked under the same version,
+and that is exactly the case that silently moves a player's stops.
+*Ruling:* the promotion is fine. It gates whether **the save** takes the loud re-anchor path, not
+whether the pack loads. The two specs stay compatible. Flagged here because it is the kind of
+cross-document coupling that rots when nobody wrote down that it was deliberate.
+
+**43. A rebake never invalidates a built depot** (2026-08-12)
+Depots are position-anchored like stops, but they sit on land rather than on an edge. Zoning is a
+**placement-time** check only — if a later OSM extract reclassifies the parcel, the depot the player
+paid $150k for stays. Retroactively invalidating built infrastructure because a data vintage changed
+would be indefensible, and no real agency loses a bus yard to a map update.
+
+**44. Report cards are integrated over the quarter, never sampled at close** (2026-08-12)
+Every category accumulates weighted by in-service game-minutes. A player who hires six drivers on
+day 9 moves Staff happiness by two tenths of the delta, because that is how much of the quarter those
+drivers worked.
+*Why:* an agency is graded on the service it delivered, not the service it owned at 23:59 on day 10.
+This is also why the panel must show **two** numbers — "Today 82 / Quarter 61" — since one number
+produces "I fixed it, why didn't it count?"
+
+**45. Coverage is scored against a 55% target, not mapped identity** (2026-08-12) **⚠︎ REVIEW**
+A literal reading of §18 puts A+ at 93% of all residents within 650 m of a stop — unreachable in
+Houston or LA, which are half the city roster. Scoring against a 55% target makes the top grade a
+goal rather than a taunt. This is the one place the spec deviates from a literal reading of the
+manual, and it is per-city overridable.
+
+**46. A single-line network scores zero on Connectability** (2026-08-12)
+The naive `Lmax / L` gives a lone line a perfect score for being alone. A `scale` term against a
+4-line target fixes it. Flagged because an implementer reading only the manual's one-sentence
+description will build the wrong thing.
+
+**47. The 35–55 payout gap stays, and surprise is fixed in the UI instead** (2026-08-12)
+Below 35 fines, 55+ pays, nothing between. It is where every honest new agency lives — two lines, a
+driver shortage, around 45 — and fining that player is fining them for playing the tutorial. It also
+separates *not yet earning* from *actively failing*, which a smooth curve would blur, and a
+discontinuity is what makes a threshold something you can put on a gauge and count down to.
+*The gap's only real cost is surprise*, so the fix is the top-bar grade chip and the projection line
+— "even at 100 in every category from now, this quarter closes at 71" — not a gentler curve.
+
+**48. The failure spiral runs, with three floors under it** (2026-08-12)
+Low grade → no grant → worse service → lower grade is real and is the most honest lesson in the game;
+cutting it makes the grant decorative. But the fine never creates unpayable debt, the 20-point dead
+zone is a long runway, and Talon & Grasp is always available with no credit check. **The spiral may
+make a player unable to act cheaply. It must never make them unable to act.**
+*Explicitly rejected:* grade-based interest, escalating fines, any game-over.
+
 ## Process
 
 **20. Nothing enters the changelog until `playtester` has run it** (2026-08-12)
