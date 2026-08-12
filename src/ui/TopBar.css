@@ -116,6 +116,14 @@
   text-align: right;
 }
 
+/* Riders/day counts into the thousands with a comma once a network exists — reserve enough width
+   that the bar doesn't reflow every recompute the way it wouldn't for cash. # tune */
+.top-bar__chip--riders .top-bar__chip-value {
+  display: inline-block;
+  min-width: 6ch;
+  text-align: right;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .top-bar__speed-btn {
     transition: none;

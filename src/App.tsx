@@ -5,9 +5,9 @@ import { useClockKeys } from './game/clock/useClockKeys';
 import { toCalendarTime } from './game/clock/calendar';
 import { accrue, createTreasury, refund, spend } from './game/economy/ledger';
 import { CENTS_PER_USD, type Treasury } from './game/economy/types';
-import { addStop, canCreate, startDraft, summarizeDraft, undoLastStop } from './game/lines/draft';
+import { addStop, canCreate, routeLeg, startDraft, summarizeDraft, undoLastStop } from './game/lines/draft';
 import type { DraftState } from './game/lines/draft';
-import { createPathfindContext, findPath, type PathfindContext } from './game/lines/pathfind';
+import { createPathfindContext, type PathfindContext } from './game/lines/pathfind';
 import { snapToRoad } from './game/lines/snapToRoad';
 import { nextId, type Line, type LineId, type RouteLeg, type Stop, type StopId } from './game/lines/types';
 import { buildRouteSchedule } from './game/buses/schedule';
@@ -138,45 +138,6 @@ function reanchorStop(saved: SavedStop, graph: StreetGraph): Stop {
   };
 }
 
-/** Routes one leg between two already-anchored stops. Mirrors `lines/draft.ts`'s (unexported)
- * `routeLeg` — this module doesn't own that file, so the logic is duplicated rather than reached
- * for across the file-ownership boundary; keep the two in sync by hand if either changes. */
-function routeLegBetweenStops(graph: StreetGraph, ctx: PathfindContext, from: Stop, to: Stop): RouteLeg | null {
-  const edgeA = ctx.edgeById.get(from.edgeId);
-  const edgeB = ctx.edgeById.get(to.edgeId);
-  if (edgeA === undefined || edgeB === undefined) return null;
-
-  if (from.edgeId === to.edgeId) {
-    const lengthM = Math.abs(to.edgeT - from.edgeT) * edgeA.lengthM;
-    return { fromStopId: from.id, toStopId: to.id, edgeIds: [edgeA.id], lengthM };
-  }
-
-  const ends = [
-    { nodeId: edgeA.from, distM: from.edgeT * edgeA.lengthM },
-    { nodeId: edgeA.to, distM: (1 - from.edgeT) * edgeA.lengthM },
-  ] as const;
-  const otherEnds = [
-    { nodeId: edgeB.from, distM: to.edgeT * edgeB.lengthM },
-    { nodeId: edgeB.to, distM: (1 - to.edgeT) * edgeB.lengthM },
-  ] as const;
-
-  let bestLengthM = Infinity;
-  let bestEdgeIds: readonly number[] | null = null;
-  for (const start of ends) {
-    for (const end of otherEnds) {
-      const path = findPath(ctx, graph, start.nodeId, end.nodeId);
-      if (path === null) continue;
-      const lengthM = start.distM + path.totalLengthM + end.distM;
-      if (lengthM < bestLengthM) {
-        bestLengthM = lengthM;
-        bestEdgeIds = [edgeA.id, ...path.edgeIds, edgeB.id];
-      }
-    }
-  }
-  if (bestEdgeIds === null) return null;
-  return { fromStopId: from.id, toStopId: to.id, edgeIds: bestEdgeIds, lengthM: bestLengthM };
-}
-
 /** Rebuilds one saved line's `legs`/`totalLengthM` against the current graph, dropping any
  * orphaned stop from its route (save-format.md §5.3: "the line keeps running past the orphan").
  * Returns `null` — never throws — if too few routable stops survive, or a leg can't be routed at
@@ -190,7 +151,7 @@ function rebuildLine(saved: SavedLine, stopsById: ReadonlyMap<StopId, Stop>, gra
   const legs: RouteLeg[] = [];
   let totalLengthM = 0;
   for (let i = 1; i < routable.length; i++) {
-    const leg = routeLegBetweenStops(graph, ctx, routable[i - 1]!, routable[i]!);
+    const leg = routeLeg(graph, ctx, routable[i - 1]!, routable[i]!);
     if (leg === null) return null;
     legs.push(leg);
     totalLengthM += leg.lengthM;
@@ -410,7 +371,10 @@ export function App() {
     return { buffers, statics };
   }, [city]);
 
-  const [ridersPerDay, setRidersPerDay] = useState(0);
+  // `undefined` until Stage B's first recompute lands — distinct from `0`, which means "computed,
+  // and this network truly carries no riders" (a city with no lines yet). TopBar's `ridersPerDay`
+  // prop makes the same distinction: omit the chip for `undefined`, show "0" for a real zero.
+  const [ridersPerDay, setRidersPerDay] = useState<number | undefined>(undefined);
 
   // Stage B — everything that reads `lines`/`stops` — reruns ~250 ms after the last network edit,
   // never on every render and never on a clock tick (`lines`/`stops` only change via a draft
@@ -432,11 +396,9 @@ export function App() {
     }, DEMAND_RECOMPUTE_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
   }, [demand, lines, stops]);
-  // `ridersPerDay` (demand-model.md §6 build order 1: "Riders/day in the top bar") is computed
-  // above and has nowhere to go from here: `TopBarProps` is a fixed, documented set of props
-  // (ui/TopBar.tsx names this exact chip as the next one to slot in) and `ui/TopBar.tsx` is outside
-  // this file's ownership for this task. Wiring it in is a one-line addition — pass `ridersPerDay`
-  // once `TopBarProps` grows a field for it.
+  // `ridersPerDay` (demand-model.md §6 build order 1: "Riders/day in the top bar") is passed
+  // straight through to `TopBar`'s own optional prop below — see the `<TopBar>` element in the
+  // return for why it's left undefined rather than 0 before the first recompute lands.
 
   // ── Updates ────────────────────────────────────────────────────────────────
   // In-play path only (manual §2): a player-initiated Reload, never capped, never automatic. The
@@ -682,6 +644,7 @@ export function App() {
         onTogglePause={togglePause}
         onSetSpeed={selectSpeed}
         companyName={companyNameRef.current}
+        {...(ridersPerDay !== undefined ? { ridersPerDay } : {})}
       />
       <main className="app-map">
         <MapCanvas

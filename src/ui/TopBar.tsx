@@ -1,8 +1,9 @@
 /**
  * The top bar (manual §5, "Top bar (left to right)"). Milestone 1 only wires up the chips that
- * have real systems behind them — clock, speed control, cash. The manual also lists Drivers,
- * Riders/day, Satisfaction and Coverage chips; those slot into `<TopBarChips>` below once staff,
- * demand and the report card exist. Nothing here invents a value for a system that isn't built.
+ * have real systems behind them — clock, speed control, cash, and now Riders/day (demand-model.md).
+ * The manual also lists Drivers, Satisfaction and Coverage chips; those slot into `<TopBarChips>`
+ * below once staff and the report card exist. Nothing here invents a value for a system that
+ * isn't built.
  */
 
 import type { ReactNode } from 'react';
@@ -18,6 +19,11 @@ export interface TopBarProps {
   readonly onSetSpeed: (index: number) => void;
   /** Company/city name shown in the left slot. SPEC (manual §5: "● Company"). */
   readonly companyName?: string;
+  /** Riders/day chip (manual §5: "Riders/day"), from Stage B's debounced demand recompute
+   * (`demand-model.md`). Optional and distinct from `0` — App.tsx holds this in state and only
+   * has a real number after the first recompute finishes; before that, omit the prop rather than
+   * claim a city with no riders yet actually has zero. */
+  readonly ridersPerDay?: number;
 }
 
 const DEFAULT_COMPANY_NAME = 'Riverton';
@@ -27,6 +33,8 @@ const cashFormatter = new Intl.NumberFormat('en-US', {
   currency: 'USD',
   maximumFractionDigits: 0,
 });
+
+const ridersFormatter = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
 
 /** Two vertical bars — the pause glyph. Hand-drawn stroke style, no emoji (see GAME.md). */
 function PauseIcon() {
@@ -59,8 +67,8 @@ function SpeedIcon({ triangleCount }: { triangleCount: number }) {
 }
 
 /**
- * A label/value pair, the shared shape every top-bar chip uses. Cash uses it today; Drivers,
- * Riders/day, Satisfaction and Coverage will reuse it unchanged when those systems land.
+ * A label/value pair, the shared shape every top-bar chip uses. Cash and Riders/day use it today;
+ * Drivers, Satisfaction and Coverage will reuse it unchanged when those systems land.
  */
 function Chip({ label, value, className }: { label: string; value: ReactNode; className?: string }) {
   const chipClassName = className ? `top-bar__chip ${className}` : 'top-bar__chip';
@@ -114,10 +122,12 @@ export function TopBar({
   onTogglePause,
   onSetSpeed,
   companyName = DEFAULT_COMPANY_NAME,
+  ridersPerDay,
 }: TopBarProps) {
   const calendarTime = toCalendarTime(clock.totalMinutes);
   const clockText = formatCalendarTime(calendarTime);
   const cashText = cashFormatter.format(cashUsd);
+  const ridersText = ridersPerDay === undefined ? undefined : ridersFormatter.format(ridersPerDay);
 
   return (
     <header className="top-bar" aria-label="Top bar">
@@ -134,10 +144,14 @@ export function TopBar({
 
         <Chip label="Cash" value={cashText} className="top-bar__chip--cash" />
 
+        {ridersText !== undefined && (
+          <Chip label="Riders/day" value={ridersText} className="top-bar__chip--riders" />
+        )}
+
         {/*
-          Milestone 2+: Drivers, Riders/day, Satisfaction and Coverage chips (manual §5) slot in
-          here as more `<Chip label=... value=... />` entries once staff, demand and the report
-          card exist. Omitted for now rather than shown with an invented value.
+          Milestone 2+: Drivers, Satisfaction and Coverage chips (manual §5) slot in here as more
+          `<Chip label=... value=... />` entries once staff and the report card exist. Omitted for
+          now rather than shown with an invented value.
         */}
       </div>
     </header>

@@ -74,8 +74,12 @@ export type AddStopResult =
  * through" and keeps the shortest that's actually routable — a stop near the middle of a long
  * block genuinely could be faster reached via either end. Returns `null` if no combination
  * routes, meaning the leg is unroutable full stop.
+ *
+ * Exported: this is also the one routing predicate save-loading re-runs when re-anchoring a line
+ * on load (App.tsx's `rebuildLine`) — "one shared predicate per rule" (GAME.md), so a reloaded
+ * line can never come back a different shape than the one that was drawn.
  */
-function routeLeg(graph: StreetGraph, ctx: PathfindContext, from: Stop, to: Stop): RouteLeg | null {
+export function routeLeg(graph: StreetGraph, ctx: PathfindContext, from: Stop, to: Stop): RouteLeg | null {
   const edgeA = ctx.edgeById.get(from.edgeId);
   const edgeB = ctx.edgeById.get(to.edgeId);
   if (edgeA === undefined || edgeB === undefined) return null; // stop points at an edge the graph doesn't have — refuse, don't throw
