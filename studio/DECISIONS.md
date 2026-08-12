@@ -454,6 +454,18 @@ fifth measured the void's pixel share and named the fit.
 *Each cause is now guarded by an assertion*, because every one of them survived at least one pass
 that had verified everything except the property that mattered.
 
+**63. Two constants named for the same idea meant different things** (2026-08-12)
+I instructed the depot work to reuse `DEPOT_MIN_SEPARATION_M` (400 m) from `city/zones.ts` for
+depot-to-depot spacing. That constant does not mean that — it spaces the ≥3 *eligible zones* apart at
+generation time. The spec states depot separation as **120 m**. Following my instruction would have
+applied a number 3.3× too large, and every test would have passed, because they would have been
+written against the same wrong constant.
+*Caught by reading both sources instead of trusting the brief.* Now `DEPOT_PLACEMENT_MIN_SEPARATION_M
+= 120` exists separately, with the distinction documented in both files.
+*The general hazard:* a shared constant is only safe when the two consumers genuinely share the
+*rule*, not merely a plausible name. "One shared predicate per rule" does not mean "one constant per
+word that appears in two rules."
+
 ## Process
 
 **20. Nothing enters the changelog until `playtester` has run it** (2026-08-12)
