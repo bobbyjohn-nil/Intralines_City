@@ -7,7 +7,16 @@ model: sonnet
 
 You own the pixels the GPU decides. `animator` owns *when* things move; you own *how they are shaded* while moving.
 
-Read `studio/GAME.md` for the palette and renderers. This game has two — restyled vector tiles online, and a fully self-rendered basemap offline — and **every effect must work in both** or be explicitly disabled in one. An effect that only exists online is a bug on a plane.
+Read `studio/GAME.md` for the palette and the renderer, and `studio/docs/design/renderer-3d.md` for how the scene is built.
+
+**There is one renderer: WebGL via three.js** (decided 2026-08-12, "Route B"). The manual's split between online vector tiles and an offline self-rendered basemap is retired — offline is a hard constraint, and the tile path was the online-only half of a pair that no longer exists. Anything you write runs in the single 3D scene.
+
+**The split that matters now is lit versus unlit**, and it is the reason contrast can still be reasoned about:
+
+- **Unlit** — ground, water, parks, roads, route ribbons, and every data-bearing layer. Their rendered pixel colour *is* their intended colour, so the palette arithmetic holds exactly. **Do not light a data layer.** The moment you do, its colour becomes a function of the camera and every contrast guarantee about it becomes a guess.
+- **Lit** — buildings, vehicles, depots, station furniture. These live inside a clamped lighting envelope (see the spec) so their colours cannot wander outside a known range.
+
+Contrast is measured on **rendered pixels** now, by framebuffer readback, not on intended fill colours. An assertion about a colour you passed to a material proves nothing about what reached the screen.
 
 ## What you own here
 

@@ -489,6 +489,44 @@ transfers exist** — the answer changes completely once a trip can use two line
 *The agent stopped here rather than adjusting constants to hit a nicer number,* which was the right
 call and the instruction it was given.
 
+**66. Data layers are unlit, and that is what keeps contrast provable** (2026-08-12)
+Ground, water, parks, roads and route ribbons are real geometry that receives **no lighting**, so a
+rendered pixel's colour equals its intended colour and every piece of palette arithmetic the Canvas
+work produced stays exactly true. Only buildings, vehicles and furniture are lit, inside a clamped
+envelope (luminance ×0.75–1.15, no tone mapping, no shadow maps) that is itself asserted.
+*Why this beats "measure everything after lighting":* it removes the variable rather than
+compensating for it. **Never light a data layer** — the moment you do, its colour becomes a function
+of the camera and every contrast guarantee about it becomes a hope.
+
+**67. Contrast is measured by framebuffer readback, with an id-buffer for segmentation** (2026-08-12)
+Headless Chromium renders the scene; an id-buffer pass says which pixels are the bus, the beauty
+buffer says what colour they are. Segmentation by id rather than by colour is what makes the test
+survive the owner supplying an arbitrary model — it does not need to know what a bus looks like.
+Paired with a **footprint-area gate (≥ 120 px)**, because a colour-correct three-pixel bus is the
+original five-cause bug wearing a green test.
+*Old assertions are re-expressed or deleted in the same change that invalidates them.* None gates CI
+after it stops measuring — that was the explicit hazard.
+
+**68. Two renderers collapse to one** (2026-08-12)
+The manual specifies restyled online vector tiles *and* a self-rendered offline basemap. Offline is a
+hard constraint, so the tile path was the online-only half of a pair — under one WebGL scene it has
+no reason to exist. Retired deliberately rather than left as a phantom second renderer that every
+future task has to reason about.
+*Propagated immediately into `.claude/agents/vfx-artist.md`*, which instructed every effect to work in
+both. An agent definition that describes a retired architecture is a stale bible with a smaller blast
+radius and the same failure mode.
+
+**69. Vehicles carry no texture** (2026-08-12)
+Livery is a runtime recolour of named material slots, so a fleet that grows costs geometry only and
+never texture memory or download. Falls out of the manual's own design — every bus wears the company
+colour with a stripe in its line's colour — and turns a per-model cost into a per-model-*type* cost.
+
+**70. Meshopt, not Draco** (2026-08-12)
+Draco's decoder fetches a wasm blob at runtime. That is a third-party network fetch in a game whose
+hard constraint forbids exactly that. Meshopt compresses nearly as well and ships inline.
+*Worth recording because the compression choice looks like a pure engineering tradeoff and is
+actually a constraint decision.*
+
 ## Process
 
 **20. Nothing enters the changelog until `playtester` has run it** (2026-08-12)
