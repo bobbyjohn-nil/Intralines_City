@@ -19,7 +19,7 @@ Then read `docs/design/` and skim the source layout so you know what already exi
 |---|---|
 | `game-designer` | specs, mechanics, tuning numbers, cut lines |
 | `gameplay-coder` | runtime systems, movement, combat, state, save/load |
-| `modeler` | 3D assets via Blender scripting, blockouts, UVs, materials, LODs, collision, rigs, import pipeline |
+| `modeler` | **prototype geometry only** — blockouts, proxies, collision — plus importing the user's real models |
 | `animator` | motion, easing, juice, hitstop, screenshake, particles |
 | `audio-designer` | SFX hookup, mixing, buses, music |
 | `level-designer` | levels, encounters, spawn data, difficulty curve |
@@ -35,8 +35,9 @@ Match the request to the smallest sufficient crew. Do not run all nine for a one
 - **"Add / build \<feature\>"** → `game-designer` (spec) → `gameplay-coder` (implement) → then `animator` + `audio-designer` **in parallel** → `playtester` (verify).
 - **"It feels bad / floaty / unresponsive"** → `animator` and `game-designer` in parallel (feel is timing *and* tuning), then `gameplay-coder` applies, then `playtester`.
 - **"Make a level / it's too hard"** → `level-designer` → `playtester`. On a 3D project, `modeler` blocks out the geometry first — greybox at correct scale before anything is authored.
-- **"I need a model / prop / kit"** → `modeler`. If it needs to move, `modeler` rigs it and `animator` animates it, in that order.
-- **"The imported model looks wrong"** (huge, sideways, black, floating) → `modeler` alone. This is almost always an unapplied transform, an axis convention, or a flipped normal.
+- **User dropped models in `assets/incoming/`** → `modeler`, one agent per model so they run concurrently. It measures scale, fixes orientation and origin, wires materials, generates collision, and places them. Then `playtester` confirms they render.
+- **"I need a placeholder / blockout"** → `modeler`. It prototypes only — proxy geometry at correct scale, never final art. Real assets come from the user; anything `modeler` generates is temporary and must be logged in `BACKLOG.md` as an asset still owed.
+- **"The imported model looks wrong"** (huge, sideways, black, floating) → `modeler` alone. Almost always an unapplied transform, an axis convention, or a texture colorspace.
 - **"Add a menu / HUD / settings"** → `ui-designer` → `playtester`.
 - **"It's slow / won't build / let's ship"** → `build-engineer` → `playtester` on a clean build.
 - **"Write a devlog / patch notes"** → `devlog-writer` alone. It reads the diff itself.
@@ -44,6 +45,31 @@ Match the request to the smallest sufficient crew. Do not run all nine for a one
 - **Bug report** → `playtester` to reproduce first, then the owning agent to fix, then `playtester` to confirm.
 
 Launch agents that do not touch the same files **in the same message** so they run concurrently. Never run two agents that will edit the same file at once — sequence them.
+
+## Speed and cost
+
+Default to **many small jobs over few large ones**. A tightly-scoped task on a cheap model beats a sprawling one on an expensive model, on wall-clock *and* on quality — narrow briefs produce narrow, correct work, while broad ones wander.
+
+Each agent already declares its model tier (`game-designer` on opus, most on sonnet, `audio-designer` and `devlog-writer` on haiku). Respect it. Do not override an agent's model upward except in the escalation case below.
+
+**Scope every job so it fits in one pass.** A good brief names the files to touch, the outcome, and nothing else. If you cannot state a task in three sentences, it is two tasks — split it and run them concurrently.
+
+- Split by **unit**: per level, per enemy, per menu screen, per prop.
+- Split by **layer**: collision separate from visuals, data separate from logic.
+- Split by **lens**: several cheap playtesters with different briefs beat one thorough one.
+
+**Where the budget actually goes.** Cost is dominated by context size, not agent count. Ten agents each reading three files is far cheaper than one agent reading thirty. So:
+
+- **Tell agents which files to read.** An agent that has to search for context burns most of its budget before it starts working. You already know the layout — pass it along.
+- **Never hand an agent the whole conversation.** Give it the spec line and the file paths.
+- **Do not re-run the pipeline on unchanged work.** If only the timing is wrong, that is `animator` alone, not spec → code → juice → test.
+- **One playtest per batch, not per agent.** Verify the combined result.
+
+**Where NOT to economize** — these protect build quality and are non-negotiable:
+
+- **Design and tuning decisions stay on the expensive tier.** A bad spec makes every downstream agent produce correct implementations of the wrong thing. This is the one place cheapness is expensive.
+- **`playtester` always runs before an item enters the changelog.** Never skip verification to save a call.
+- **Escalate on stall.** If a cheap agent reports being blocked, uncertain, or returns something that does not match the brief, re-run that one job on a stronger model rather than accepting the weak result or patching it yourself. One escalation is cheaper than a bad merge.
 
 ## Fan-out: many copies of one worker
 

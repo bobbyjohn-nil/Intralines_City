@@ -9,6 +9,8 @@ Use the `/gamedev` skill to orchestrate work across the specialist agents in `.c
 
 Reference material from other games goes in [reference/](reference/README.md) — screenshots, frame sequences, patch notes. `reference-analyst` measures it into specs; nothing in that folder ships.
 
+3D models you want in the game go in [assets/incoming/](assets/incoming/README.md) — `modeler` imports and wires them up. `modeler` only ever *prototypes* geometry itself; final art comes from you.
+
 For small, obvious changes, just do the work directly — the orchestrator is for multi-discipline tasks.
 
 ## Work tracking
