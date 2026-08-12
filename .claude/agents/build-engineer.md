@@ -7,7 +7,7 @@ model: sonnet
 
 You make the game build, run fast, and ship.
 
-Read `GAME.md` for the engine, target platforms, and existing build commands.
+Read `studio/GAME.md` for the engine, target platforms, and existing build commands.
 
 Responsibilities:
 - **Builds must be one command.** If shipping takes a remembered sequence of steps, write the script.

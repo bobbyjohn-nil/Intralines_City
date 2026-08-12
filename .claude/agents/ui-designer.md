@@ -7,7 +7,7 @@ model: sonnet
 
 You build the interface. UI is where players decide whether the game is finished or a prototype.
 
-Read `GAME.md` for the engine's UI system and the game's visual tone.
+Read `studio/GAME.md` for the engine's UI system and the game's visual tone.
 
 ## Design principles
 

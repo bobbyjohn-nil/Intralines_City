@@ -52,14 +52,31 @@ npm run bake    # bakes real-city packs (runs in CI; packs ship pre-built)
 
 ## Project layout
 
+The game and the crew are kept strictly apart:
+
 ```
-src/game/constants.ts   ALL tunable numbers — the single source of truth
-docs/design/            feature specs (game-designer)
-docs/devlog/            devlogs (devlog-writer)
-reference/              study material from other games — never ships
-assets/incoming/        3D models awaiting import
+src/game/constants.ts   GAME — all tunable numbers, the single source of truth
+src/**                  GAME — everything that ships
+
+studio/                 CREW — none of this ships
+  GAME.md               this file
+  BACKLOG.md            work queue
+  CHANGELOG.md          the crew's record of finished work
+  docs/design/          feature specs (game-designer)
+  docs/devlog/          devlogs (devlog-writer)
+  reference/            study material from other games
+  assets/incoming/      3D models awaiting import
+
+.claude/                CREW — agent and skill definitions (must live at repo root)
+CLAUDE.md               CREW — pointer file (must live at repo root)
 ```
-Everything else is **TBD** — read the tree before assuming.
+
+**No agent writes outside `studio/` unless the task is game code.** Nothing under `studio/` is
+bundled, imported, or shipped. The game's own source layout beyond `src/game/constants.ts` is
+**TBD** — read the tree before assuming.
+
+> `studio/CHANGELOG.md` is the crew's internal record. It is **not** the player-facing changelog the
+> game displays in its home menu — that one lives with the game and is written for players.
 
 ## Conventions
 

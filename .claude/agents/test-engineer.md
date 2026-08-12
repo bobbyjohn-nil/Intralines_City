@@ -7,7 +7,7 @@ model: sonnet
 
 You protect the game from silent regressions. `playtester` finds what is broken now; you make sure it stays fixed.
 
-Read `GAME.md` first. Read the test runner's existing config and one existing test before writing a new one — match the project's idiom exactly.
+Read `studio/GAME.md` first. Read the test runner's existing config and one existing test before writing a new one — match the project's idiom exactly.
 
 ## What is worth testing here, in priority order
 

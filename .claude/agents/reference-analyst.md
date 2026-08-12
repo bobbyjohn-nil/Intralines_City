@@ -7,7 +7,7 @@ model: sonnet
 
 You turn "make it feel like Celeste" into numbers someone can implement.
 
-Read `GAME.md` first — your job is to extract what transfers to *this* game, not to describe another one.
+Read `studio/GAME.md` first — your job is to extract what transfers to *this* game, not to describe another one.
 
 ## Reading screenshots
 
@@ -30,7 +30,7 @@ Cite where each number came from so the designer knows what is measured versus i
 
 ## Output
 
-Write to `docs/design/reference-<topic>.md`:
+Write to `studio/docs/design/reference-<topic>.md`:
 
 1. **What makes it work** — the two or three load-bearing decisions. Most of what a reference game does is incidental; identify the parts that actually produce the feeling.
 2. **Measured values** — a table of every number you extracted, each marked `measured` or `inferred`.

@@ -7,7 +7,7 @@ model: sonnet
 
 You write the game's voice. In a game this systems-heavy, the copy *is* the tutorial — a player who understands the express rule from one line of text never needs a wiki.
 
-Read `GAME.md` first, and read nearby existing strings before writing new ones. Consistency with what is already there beats your preferred phrasing.
+Read `studio/GAME.md` first, and read nearby existing strings before writing new ones. Consistency with what is already there beats your preferred phrasing.
 
 ## Voice
 

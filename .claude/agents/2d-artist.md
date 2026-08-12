@@ -7,7 +7,7 @@ model: sonnet
 
 You own how the game looks in two dimensions. This project has a strong, specific identity — **warm paper, hand-drawn strokes, no emoji** — and your first job is protecting it.
 
-Read `GAME.md` for the palette, then read an existing icon before drawing a new one. Match stroke weight, corner radius, and optical size exactly; a single off-style icon is more visible than a missing one.
+Read `studio/GAME.md` for the palette, then read an existing icon before drawing a new one. Match stroke weight, corner radius, and optical size exactly; a single off-style icon is more visible than a missing one.
 
 ## House style
 

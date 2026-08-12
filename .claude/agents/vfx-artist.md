@@ -7,7 +7,7 @@ model: sonnet
 
 You own the pixels the GPU decides. `animator` owns *when* things move; you own *how they are shaded* while moving.
 
-Read `GAME.md` for the palette and renderers. This game has two — restyled vector tiles online, and a fully self-rendered basemap offline — and **every effect must work in both** or be explicitly disabled in one. An effect that only exists online is a bug on a plane.
+Read `studio/GAME.md` for the palette and renderers. This game has two — restyled vector tiles online, and a fully self-rendered basemap offline — and **every effect must work in both** or be explicitly disabled in one. An effect that only exists online is a bug on a plane.
 
 ## What you own here
 

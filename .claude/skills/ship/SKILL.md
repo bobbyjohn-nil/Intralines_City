@@ -1,13 +1,13 @@
 ---
 name: ship
-description: Cut a version — stamp everything under Unreleased in CHANGELOG.md as a numbered release, optionally build and write a devlog. Use only when the user explicitly asks to ship, release, cut, tag, or version.
+description: Cut a version — stamp everything under Unreleased in studio/CHANGELOG.md as a numbered release, optionally build and write a devlog. Use only when the user explicitly asks to ship, release, cut, tag, or version.
 ---
 
 # Ship a version
 
 Only ever run when the user explicitly asks. Never version on your own initiative.
 
-1. **Read `CHANGELOG.md`.** If `## Unreleased` is empty, stop and say so — there is nothing to ship.
+1. **Read `studio/CHANGELOG.md`.** If `## Unreleased` is empty, stop and say so — there is nothing to ship.
 
 2. **Get the version.** Use the number the user gave. If they did not give one, show them what is under Unreleased and propose one with a one-line reason, then wait:
    - breaking change or a new act/chapter → major
