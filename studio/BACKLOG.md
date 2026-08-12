@@ -21,15 +21,12 @@ Goal: a bus drives a line you drew, on a fake city, and it costs money. No real 
 drawing, bus motion and the money floor all ship and are verified in a browser. Everything below is
 follow-up work found while building it.
 
-**Found in the second full playtest (2026-08-12) — queued, not yet fixed:**
+**Still open from the playtests (2026-08-12):**
 
-- [ ] **Buses are still invisible.** The size fix landed but `drawBuses()` fills the marker and never strokes it, in a tan within a few RGB units of the paper background. `drawStops()` fills *and* strokes, which is why stops read and buses do not. Fix after the stop-hoisting refactor merges, since both touch `drawOverlays.ts`
-- [ ] The diagonal avenue spans only 10 of 43 grid columns (`DIAGONAL_HALF_SPAN_COLUMNS = 5`) — about 200 m in a 6 km city. It reads as a stray pencil scratch, and "creates triangular blocks" is barely achievable at that span
-- [ ] The draft bar reflows the map. It is a normal-flow flex sibling, so opening it shrinks and re-fits the map viewport. `Notice` is `position: fixed` and correctly causes no shift — the draft bar should match
-- [ ] The map occupies about a third of the screen width, centred in a large empty void. **Diagnosed: not CSS.** The container and canvas are edge-to-edge; the canvas is drawing a small city inside a full-size box. Route to `src/render/` — fit-to-bounds leaving excess padding, or a resize not tracking the container. Blocked until the stop-hoisting refactor merges out of its worktree
 - [ ] `UpdateBanner.css` does not use the new `--ui-z-banner` token. A z-index scale now exists in `tokens.css` (chrome 10, notice 20, banner 30); the banner predates it and still sets its own value
 - [ ] Verify `--ui-dock-height` matches the dock's real rendered height. It assumes the icon+label stack fits the 40px hit-target box; if it overflows, the map is inset short of or past the dock's edge. Needs a browser
 - [ ] `GAME.md` promises buses run headlights and lit windows at night. Zero implementation exists — a documented, unbuilt feature
+- [ ] Verify with more than two buses on a line. Every playtest so far ran the default pair; visibility and clutter at higher frequency are unverified
 
 **Found while verifying the first playable build (2026-08-12):**
 
