@@ -110,6 +110,15 @@ export function MapCanvas({
   const onHoverRef = useRef(onHover);
   onHoverRef.current = onHover;
 
+  // Whether the player has ever panned or zoomed this city's viewport by hand (set by the drag
+  // and wheel handlers below). While false, every observed size change performs a *full*
+  // `fitToBounds` (recomputing zoom, not just width/height) — see the sizing effect below for why:
+  // this is what stops a layout race (the boot hand-off revealing the map, a panel opening, a
+  // font-load reflow settling the container after mount) from stranding the camera at whatever
+  // undersized rect happened to exist the instant this component first mounted. Once true, a
+  // resize only patches width/height and preserves the player's chosen zoom/pan, same as always.
+  const hasUserAdjustedViewportRef = useRef(false);
+
   // Redraw when the tint-relevant minute actually changes — quantised so sub-minute clock ticks
   // (the sim runs faster than real time) don't each trigger a repaint.
   useEffect(() => {
@@ -129,8 +138,10 @@ export function MapCanvas({
     dirtyRef.current = true;
   }, [lines, stops, schedules, draft, hoverLngLat]);
 
-  // Fit the viewport to the city whenever the city itself changes.
+  // Fit the viewport to the city whenever the city itself changes, and let a brand-new city start
+  // at a correct, full fit rather than inheriting the previous city's manual pan/zoom state.
   useEffect(() => {
+    hasUserAdjustedViewportRef.current = false;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
@@ -142,7 +153,20 @@ export function MapCanvas({
     dirtyRef.current = true;
   }, [city]);
 
-  // Sizing: device-pixel-ratio-correct canvas, redrawn (not just resized) on window resize.
+  // Sizing: device-pixel-ratio-correct canvas, refit (not just resized) whenever the canvas's own
+  // box actually changes size. Watched with a `ResizeObserver` on the canvas itself rather than
+  // (only) `window`'s `resize` event, because the canvas can change size for reasons that never
+  // fire a window resize — the boot hand-off revealing the map, a side panel opening/closing, an
+  // orientation change, a font-load reflow settling a flex container's height after first paint.
+  // Any one of those, landing between this component's mount and the layout actually settling,
+  // used to strand `fitToBounds`'s zoom against a too-small transitional rect forever (only
+  // `viewport.width`/`height` ever got corrected afterwards, never the zoom that was fit to them —
+  // see `projection.ts`'s `fitToBounds` doc and the render task's "initial scale" fix): the DOM
+  // element itself would report its final, correct size to any inspector, while the map was drawn
+  // small and centered in a void, because everything (road widths, bus markers, park fills) scales
+  // off the same stuck `viewport.scale()`. Falls back to the `window` resize event if
+  // `ResizeObserver` is unavailable (SPEC: degrade, don't fail) — strictly worse coverage, but
+  // still functional. TUNE: none of this changes drawing, only when a refit is triggered.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -156,16 +180,26 @@ export function MapCanvas({
       canvas.height = Math.round(cssHeight * dpr);
 
       const viewport = viewportRef.current;
-      if (viewport) {
+      if (viewport && hasUserAdjustedViewportRef.current) {
+        // The player has already taken manual control of pan/zoom for this city — a resize must
+        // preserve it, only the frame around it changes.
         viewport.width = cssWidth;
         viewport.height = cssHeight;
       } else {
+        // No manual pan/zoom yet: always (re)compute a full fit against the size actually
+        // observed now, so the very first thing the player sees is correct no matter when layout
+        // settles.
         viewportRef.current = Viewport.fitToBounds(cityRef.current.bounds, cssWidth, cssHeight);
       }
       dirtyRef.current = true;
     };
 
     resize();
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(resize);
+      observer.observe(canvas);
+      return () => observer.disconnect();
+    }
     window.addEventListener('resize', resize);
     return () => window.removeEventListener('resize', resize);
   }, []);
@@ -243,6 +277,7 @@ export function MapCanvas({
         // Dragging the map right should slide the world right under the cursor, i.e. pan the
         // viewport center left — panBy takes a screen-space delta of that opposite sign.
         viewportRef.current.panBy(-dx, -dy);
+        hasUserAdjustedViewportRef.current = true;
         dirtyRef.current = true;
       }
       reportHoverAt(event.clientX, event.clientY);
@@ -276,6 +311,7 @@ export function MapCanvas({
       const screenY = event.clientY - rect.top;
       const factor = Math.exp(-event.deltaY * WHEEL_ZOOM_SENSITIVITY);
       viewportRef.current.zoomAt(factor, screenX, screenY);
+      hasUserAdjustedViewportRef.current = true;
       dirtyRef.current = true;
     };
 

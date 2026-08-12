@@ -411,6 +411,25 @@ inconsistency, not an agent's mistake.
 *Rule going forward:* shared files are named in **every** brief that could plausibly touch them, not
 only the ones where I happen to think of it.
 
+**59. I mistook the root cause for a cosmetic complaint, three times** (2026-08-12)
+Buses invisible, parks invisible, road hierarchy illegible — three findings, three separate fixes,
+each verified correct in isolation. All three were the **same bug**: `fitToBounds` renders the whole
+city into a ~262×273 px square inside a 1317×507 canvas, so everything on the map is drawn at about a
+third of the scale it should be. An 18 px bus marker against a city filling the screen is a different
+object from 18 px against a city occupying a third of it.
+*I had the evidence twice and misread it.* The second playtest reported "the map occupies about a
+third of the screen width, centred in a large empty void" and I filed it as dead space — a layout
+nicety — while separately chasing the symptoms it was producing. A third playtest connected them.
+*The transferable lesson:* when three independent fixes all fail to show up, stop fixing and look for
+what they share. Repeated failure of correct fixes is itself the evidence.
+
+**60. The missing assertion is the one that lets a bug survive verification** (2026-08-12)
+Nothing anywhere asserted that the city occupies a reasonable fraction of the viewport. Every
+individual marker had its size tested, its colour distance measured, its contrast defended — and the
+one property that made all of that moot went unchecked through three playtests.
+*Now a regression test:* `fitToBounds` must place the bounds across at least a stated fraction of the
+smaller viewport axis, at several aspect ratios.
+
 ## Process
 
 **20. Nothing enters the changelog until `playtester` has run it** (2026-08-12)

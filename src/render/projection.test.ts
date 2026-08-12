@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_ZOOM, MIN_ZOOM, Viewport } from './projection';
+import { MAX_ZOOM, METERS_PER_DEGREE_LAT, MIN_ZOOM, Viewport } from './projection';
 import type { MutableLngLat, ScreenPoint } from './projection';
+import type { Bounds } from '../game/types';
 
 function makeViewport(): Viewport {
   // Riverton-ish demo coordinates and a mid-range zoom, non-trivial center latitude so the
@@ -146,5 +147,61 @@ describe('fitToBounds', () => {
     expect(nw.y).toBeGreaterThanOrEqual(0);
     expect(se.x).toBeLessThanOrEqual(1000);
     expect(se.y).toBeLessThanOrEqual(800);
+  });
+
+  // Regression guard for the "initial scale" bug: `fitToBounds` itself was never wrong (see the
+  // render task's writeup), but nothing asserted that its *result* actually fills most of the
+  // viewport — so a real bug elsewhere (MapCanvas seeding the fit from a stale, transitional rect)
+  // survived three playtests before anyone measured the on-screen size rather than just the maths.
+  // This is that missing assertion: across several viewport shapes, including a very wide one (the
+  // exact 1317x507 case from the bug report), a city's bounds must occupy at least a stated
+  // fraction of the *smaller* viewport axis — never a speck centered in a void.
+  describe('fills the viewport it is given (regression: initial-scale bug)', () => {
+    /** A city occupying less than this fraction of the smaller viewport axis reads as "a speck in
+     * a void" at a glance — this is the number that should fail if excess margin is reintroduced
+     * (a stale rect upstream, a much bigger padding constant, fitting the wrong axis, etc). TUNE */
+    const MIN_FIT_FRACTION_OF_SMALLER_AXIS = 0.6;
+
+    /** Bounds whose real-world extent is a perfect square in metres — matching this game's actual
+     * city packs (see `generateRiverton`), so a correct "contain" fit renders a square on screen
+     * regardless of the viewport's own aspect ratio, making the assertions below unambiguous. */
+    function squareBounds(centerLat: number, sideM: number): Bounds {
+      const halfLatDeg = sideM / 2 / METERS_PER_DEGREE_LAT;
+      const mLng = METERS_PER_DEGREE_LAT * Math.cos((centerLat * Math.PI) / 180);
+      const halfLngDeg = sideM / 2 / mLng;
+      return {
+        west: -halfLngDeg,
+        east: halfLngDeg,
+        south: centerLat - halfLatDeg,
+        north: centerLat + halfLatDeg,
+      };
+    }
+
+    // ~6.4km on a side, the same order of magnitude as the real Riverton pack.
+    const bounds = squareBounds(41.6, 6400);
+
+    const viewportSizes: ReadonlyArray<readonly [string, number, number]> = [
+      ['the reported bug case (wide, short)', 1317, 507],
+      ['16:9', 1600, 900],
+      ['21:9 ultrawide', 2560, 1097],
+      ['tall narrow (portrait)', 500, 1000],
+      ['square', 800, 800],
+    ];
+
+    for (const [label, width, height] of viewportSizes) {
+      it(`at ${label} (${width}x${height})`, () => {
+        const viewport = Viewport.fitToBounds(bounds, width, height);
+        const nw: ScreenPoint = { x: 0, y: 0 };
+        const se: ScreenPoint = { x: 0, y: 0 };
+        viewport.project(bounds.west, bounds.north, nw);
+        viewport.project(bounds.east, bounds.south, se);
+        const fittedWidth = se.x - nw.x;
+        const fittedHeight = se.y - nw.y;
+        const smallerAxis = Math.min(width, height);
+
+        expect(fittedWidth).toBeCloseTo(fittedHeight, 1);
+        expect(fittedWidth / smallerAxis).toBeGreaterThanOrEqual(MIN_FIT_FRACTION_OF_SMALLER_AXIS);
+      });
+    }
   });
 });
