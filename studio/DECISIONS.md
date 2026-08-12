@@ -466,6 +466,29 @@ written against the same wrong constant.
 *rule*, not merely a plausible name. "One shared predicate per rule" does not mean "one constant per
 word that appears in two rules."
 
+**64. Commuters were making one trip a day, not two** (2026-08-12)
+`assignModeAndAggregate` read the one-way commuter flow with no return-trip factor anywhere in the
+module — every rider went to work and never came home. Fixed with `TRIPS_PER_COMMUTER_PER_DAY = 2`,
+applied once downstream of Stage A so the O–D table still conserves to `zoneProd` exactly, which is
+the spec's own invariant.
+*Found by working the expected magnitude from first principles* — 42,000 residents × 0.49 workforce ×
+2 trips ≈ 41,000 trips/day citywide — and comparing stage by stage, rather than by inspecting code
+for something that looked wrong. The other four suspects were ruled out with arithmetic: gravity
+conserves to machine precision, the logit returns 0.5302 against a specified 0.53.
+
+**65. The rest of the shortfall is not a bug, and was left alone** (2026-08-12) **⚠︎ REVIEW**
+After the fix, a full-coverage line yields 13,133 boardings/day and an 8-line grid 6,438 — thousands,
+as expected. But a sparse 3-stop line still yields **tens**, and that is correct for this slice: with
+transfers unbuilt, both ends of a trip must sit on the *same* line.
+*The tension worth a decision:* Riverton's zone lattice is 490 × 735 m while `WALK_RADIUS_M` is 650 m,
+so each stop is reachable from only 2–3 of 96 zones and just 32 of 9,216 O–D pairs are servable at
+all. That is real geometry, not an implementation fault — but it means the demo city's demand is
+extremely sensitive to stop placement in a way a real city's would not be. Either the lattice is too
+coarse for the walk radius, or it is fine and transfers will fix it. **Do not tune this until
+transfers exist** — the answer changes completely once a trip can use two lines.
+*The agent stopped here rather than adjusting constants to hit a nicer number,* which was the right
+call and the instruction it was given.
+
 ## Process
 
 **20. Nothing enters the changelog until `playtester` has run it** (2026-08-12)

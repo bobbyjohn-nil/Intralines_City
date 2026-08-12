@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { mixHex, type PaperPalette } from './paperPalette';
 import {
+  buildLegWaypoints,
   busMarkerLengthPx,
   busMarkerWidthPx,
   busStrokeWidthPx,
@@ -8,12 +9,16 @@ import {
   createBusMarkerPointsScratch,
   getBusStripeColor,
   getLineColor,
+  lerpLngLat,
   pointerMovedPastClickThreshold,
   routeWidthPx,
+  sharedNodeId,
   stopRadiusPx,
 } from './drawOverlays';
 import { getTimeOfDayTint } from './timeOfDay';
 import { MAX_ZOOM, MIN_ZOOM, Viewport } from './projection';
+import type { RoadEdge, RoadNode } from '../game/types';
+import type { RouteLeg, Stop, StopId } from '../game/lines/types';
 import {
   BUS_BODY_COLOR_MIX,
   BUS_MARKER_LENGTH_MAX_PX,
@@ -508,5 +513,162 @@ describe('computeBusMarkerPoints', () => {
     const out = createBusMarkerPointsScratch();
     const result = computeBusMarkerPoints(1, 2, 45, 10, 6, out);
     expect(result).toBe(out);
+  });
+});
+
+describe('route geometry (regression: the coloured route stroke overshot its first/last stop, ' +
+  'and doubled back on itself at any intermediate stop that sits mid-edge at a turn — both are the ' +
+  'same underlying defect: `RouteLeg.edgeIds` names whole road edges, but a `Stop` sits at `edgeT`, ' +
+  'a fraction *along* one, and the old code drew every edge end-to-end, ignoring that fraction ' +
+  'entirely)', () => {
+  // A minimal "L" street: A(0,0) --E1--> B(10,0) --E2--> C(10,10). Degrees stand in for lng/lat —
+  // these helpers are pure arithmetic on `[lng, lat]` tuples, never a live `Viewport`.
+  const nodeA: RoadNode = { id: 1, pos: [0, 0] };
+  const nodeB: RoadNode = { id: 2, pos: [10, 0] };
+  const nodeC: RoadNode = { id: 3, pos: [10, 10] };
+  const nodeIndex = new Map<number, RoadNode>([
+    [nodeA.id, nodeA],
+    [nodeB.id, nodeB],
+    [nodeC.id, nodeC],
+  ]);
+
+  const edge1: RoadEdge = { id: 1, from: nodeA.id, to: nodeB.id, roadClass: 'residential', lengthM: 10 };
+  const edge2: RoadEdge = { id: 2, from: nodeB.id, to: nodeC.id, roadClass: 'residential', lengthM: 10 };
+  const edgeIndex = new Map<number, RoadEdge>([
+    [edge1.id, edge1],
+    [edge2.id, edge2],
+  ]);
+
+  function makeStop(id: number, edgeId: number, edgeT: number, position: readonly [number, number]): Stop {
+    return {
+      id: id as StopId,
+      name: `Stop ${id}`,
+      position,
+      roadClass: 'residential',
+      edgeId,
+      edgeT,
+      orphaned: false,
+      movedM: null,
+    };
+  }
+
+  describe('sharedNodeId', () => {
+    it('finds the node two consecutive edges share, regardless of which ends they store it as', () => {
+      expect(sharedNodeId(edge1, edge2)).toBe(nodeB.id); // edge1.to === edge2.from
+      expect(sharedNodeId(edge2, edge1)).toBe(nodeB.id); // order-independent
+    });
+
+    it('returns undefined for edges that share no node', () => {
+      const farEdge: RoadEdge = { id: 99, from: 100, to: 101, roadClass: 'residential', lengthM: 5 };
+      expect(sharedNodeId(edge1, farEdge)).toBeUndefined();
+    });
+  });
+
+  describe('lerpLngLat', () => {
+    it('returns `from` at t=0 and `to` at t=1', () => {
+      expect(lerpLngLat(nodeA.pos, nodeB.pos, 0)).toEqual([0, 0]);
+      expect(lerpLngLat(nodeA.pos, nodeB.pos, 1)).toEqual([10, 0]);
+    });
+
+    it('interpolates linearly in between', () => {
+      const [lng, lat] = lerpLngLat(nodeA.pos, nodeB.pos, 0.25);
+      expect(lng).toBeCloseTo(2.5, 9);
+      expect(lat).toBeCloseTo(0, 9);
+    });
+  });
+
+  describe('buildLegWaypoints', () => {
+    const TOLERANCE = 9; // decimal places — tight, since these are exact tuple constructions
+
+    it('a single-edge leg begins and ends exactly at its two stops, not the edge\'s nodes', () => {
+      const s0 = makeStop(0, edge1.id, 0.2, [2, 0]);
+      const s1 = makeStop(1, edge1.id, 0.8, [8, 0]);
+      const leg: RouteLeg = { fromStopId: s0.id, toStopId: s1.id, edgeIds: [edge1.id], lengthM: 6 };
+
+      const out: Array<readonly [number, number]> = [];
+      buildLegWaypoints(leg, s0, s1, edgeIndex, nodeIndex, out);
+
+      expect(out.length).toBe(2);
+      expect(out[0]![0]).toBeCloseTo(s0.position[0], TOLERANCE);
+      expect(out[0]![1]).toBeCloseTo(s0.position[1], TOLERANCE);
+      expect(out[out.length - 1]![0]).toBeCloseTo(s1.position[0], TOLERANCE);
+      expect(out[out.length - 1]![1]).toBeCloseTo(s1.position[1], TOLERANCE);
+      // Regression guard for the termini-overshoot half of the bug: the old code drew all the way
+      // to the edge's own nodes (0,0) and (10,0) regardless of where the stops actually sat.
+      expect(out[0]).not.toEqual(nodeA.pos);
+      expect(out[out.length - 1]).not.toEqual(nodeB.pos);
+    });
+
+    it('a multi-edge leg is clipped at both ends and passes through the shared node in between', () => {
+      const s0 = makeStop(0, edge1.id, 0.8, [8, 0]);
+      const s1 = makeStop(1, edge2.id, 0.5, [10, 5]);
+      const leg: RouteLeg = { fromStopId: s0.id, toStopId: s1.id, edgeIds: [edge1.id, edge2.id], lengthM: 7 };
+
+      const out: Array<readonly [number, number]> = [];
+      buildLegWaypoints(leg, s0, s1, edgeIndex, nodeIndex, out);
+
+      expect(out.length).toBe(3);
+      expect(out[0]).toEqual([8, 0]); // clipped entry, not node A or B
+      expect(out[1]).toEqual(nodeB.pos); // the real joint between edge1 and edge2
+      expect(out[2]).toEqual([10, 5]); // clipped exit, not node C
+    });
+
+    it(
+      'the whole-line polyline begins/ends exactly at the terminus stops and never doubles back ' +
+        'over a shared edge at a mid-edge intermediate stop (the second half of the reported bug — ' +
+        'a stop shared by two legs used to have both legs draw that edge in full)',
+      () => {
+        // S0 sits exactly at node A; S1 sits mid-edge on edge1 (the turn); S2 sits mid-edge on
+        // edge2. Leg1 = S0→S1 (edge1 only). Leg2 = S1→S2 (edge1's remainder, then edge2) — S1's
+        // own edge (edge1) is `leg1`'s last edge *and* `leg2`'s first edge, exactly the shared-edge
+        // case the bug report calls out.
+        const s0 = makeStop(0, edge1.id, 0, [0, 0]);
+        const s1 = makeStop(1, edge1.id, 0.8, [8, 0]);
+        const s2 = makeStop(2, edge2.id, 0.5, [10, 5]);
+        const leg1: RouteLeg = { fromStopId: s0.id, toStopId: s1.id, edgeIds: [edge1.id], lengthM: 8 };
+        const leg2: RouteLeg = {
+          fromStopId: s1.id,
+          toStopId: s2.id,
+          edgeIds: [edge1.id, edge2.id],
+          lengthM: 7,
+        };
+
+        // Mirrors exactly what `drawLineRoute` does: concatenate every leg's waypoints into one
+        // continuous polyline (see its own comment on why legs share a subpath).
+        const polyline: Array<readonly [number, number]> = [];
+        buildLegWaypoints(leg1, s0, s1, edgeIndex, nodeIndex, polyline);
+        buildLegWaypoints(leg2, s1, s2, edgeIndex, nodeIndex, polyline);
+
+        const first = polyline[0]!;
+        const last = polyline[polyline.length - 1]!;
+        expect(first[0]).toBeCloseTo(s0.position[0], TOLERANCE);
+        expect(first[1]).toBeCloseTo(s0.position[1], TOLERANCE);
+        expect(last[0]).toBeCloseTo(s2.position[0], TOLERANCE);
+        expect(last[1]).toBeCloseTo(s2.position[1], TOLERANCE);
+
+        // No point after S1 (x=8) ever falls back below it — a monotonic march along the L, not a
+        // reversal back toward node A. The pre-fix bug would have re-drawn edge1 in full for leg2
+        // (A(0,0) → B(10,0)), reintroducing node A's x=0 after S1's x=8: a literal backtrack.
+        const s1Index = polyline.findIndex((p) => p[0] === s1.position[0] && p[1] === s1.position[1]);
+        expect(s1Index).toBeGreaterThanOrEqual(0);
+        for (let i = s1Index; i < polyline.length; i++) {
+          expect(polyline[i]![0]).toBeGreaterThanOrEqual(s1.position[0] - 1e-9);
+        }
+        // Node A must not reappear anywhere after S1 — the exact signature of the old bug (leg2
+        // drawing edge1's far node again instead of stopping/starting at S1).
+        for (let i = s1Index + 1; i < polyline.length; i++) {
+          expect(polyline[i]).not.toEqual(nodeA.pos);
+        }
+      },
+    );
+
+    it('degrades to the edge\'s own node instead of throwing when the expected stop is missing ' +
+      '(a caller bug, not a player-reachable state — matches this file\'s existing skip-and-continue ' +
+      'idiom elsewhere)', () => {
+      const leg: RouteLeg = { fromStopId: 0 as StopId, toStopId: 1 as StopId, edgeIds: [edge1.id], lengthM: 10 };
+      const out: Array<readonly [number, number]> = [];
+      expect(() => buildLegWaypoints(leg, undefined, undefined, edgeIndex, nodeIndex, out)).not.toThrow();
+      expect(out).toEqual([nodeA.pos, nodeB.pos]);
+    });
   });
 });

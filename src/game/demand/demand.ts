@@ -33,6 +33,7 @@ import {
   CAPTIVE_SHARE,
   LOGIT_SCALE_FACTOR,
   LOGIT_SENSITIVITY_MIN,
+  TRIPS_PER_COMMUTER_PER_DAY,
   WAIT_CAP_MIN,
 } from './constants';
 import { WALK_MINUTES_PER_KM, WALK_RADIUS_M } from '../constants';
@@ -301,7 +302,12 @@ function computeBusMinutes(buffers: DemandBuffers, z: number, lineCount: number,
  * B9's per-line totals — there is no intermediate per-hour or per-stop assignment this slice).
  * Captive riders "ride if any path exists; if `busMin` is infinite they are stranded, not riders"
  * (demand-model.md §3) — an infinite `busMin` contributes 0 share, full stop, never the 0.13
- * floor. */
+ * floor.
+ *
+ * `odCommute[i][j]` is Stage A's one-way *commuter* flow (conserves to `zoneProd[i]`, per its own
+ * doc comment) — the point this function reads it is deliberately the only place
+ * `TRIPS_PER_COMMUTER_PER_DAY` (out and back) gets applied, so `odCommute` itself keeps
+ * conserving to `prod[i]`, not `2 * prod[i]` (demand-model.md §7's conservation test). */
 function assignModeAndAggregate(buffers: DemandBuffers, z: number, lineCount: number): { totalTrips: number; totalBoardings: number } {
   buffers.boardingsPerLine.fill(0, 0, lineCount);
   buffers.linkedTripsPerLine.fill(0, 0, lineCount);
@@ -312,7 +318,7 @@ function assignModeAndAggregate(buffers: DemandBuffers, z: number, lineCount: nu
   for (let i = 0; i < z; i++) {
     for (let j = 0; j < z; j++) {
       const idx = i * z + j;
-      const odTrips = buffers.odCommute[idx]!;
+      const odTrips = buffers.odCommute[idx]! * TRIPS_PER_COMMUTER_PER_DAY;
       totalTrips += odTrips;
       if (odTrips <= 0) continue;
 

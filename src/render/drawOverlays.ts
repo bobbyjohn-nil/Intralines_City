@@ -22,7 +22,7 @@
  * palette object identity so a theme flip recomputes it once, not every frame.
  */
 
-import type { City, LngLat } from '../game/types';
+import type { City, LngLat, RoadEdge, RoadNode } from '../game/types';
 import type { Draft, Line, RouteLeg, Stop, StopId } from '../game/lines/types';
 import type { RouteSchedule } from '../game/buses/schedule';
 import { busPositionAt, createBusPositionScratch, type BusPosition } from '../game/buses/position';
@@ -311,36 +311,202 @@ export function routeWidthPx(viewport: Viewport): number {
   return motorwayWidthPx * ROUTE_WIDTH_MULTIPLIER;
 }
 
-/** Strokes every leg's edges as one path + one `stroke()` call, matching `drawCity`'s
- * one-call-per-layer discipline. Draws full edges (not clipped to a stop's fractional position on
- * its first/last edge) — the route is infrastructure, not a precise bus path; `busPositionAt`
- * (via `drawBuses` below) is what places a bus exactly. */
+// ── Route geometry: clip legs to their stops, not their edges' nodes ────────────────────────────
+// Bug fix (owner report): the coloured route stroke used to run past a leg's first/last stop out
+// to that edge's far *node*, because `RouteLeg.edgeIds` names whole road edges but a `Stop` sits
+// at `edgeT`, a fraction *along* one — drawing every edge end-to-end (the old `drawLineRoute` body,
+// see git history) always overshot both termini. The same defect also hit every *intermediate*
+// stop that happens to sit mid-edge at a turn: `routeLeg` (`game/lines/draft.ts`) puts the stop's
+// own edge at `leg.edgeIds[0]` (fromStop) or `leg.edgeIds[edgeIds.length - 1]` (toStop), so a stop
+// shared by two consecutive legs has *both* legs drawing that same edge in full — a real, visible
+// spur backtracking from the corner toward the edge's other node (invisible on a straight road,
+// where the duplicate full-edge draw exactly overlaps itself, which is exactly why it went
+// unnoticed until a turn made it visible). Fixed below by clipping every leg's first and last edge
+// to the fractional `edgeT` position of its own stop, so two legs sharing a stop's edge now compute
+// the identical clipped point and terminate exactly there instead of continuing to the shared node.
+
+/** The node id shared by two directly-connected edges (`a`'s far endpoint from a route leg's
+ * previous edge, matched against `b`'s two endpoints) — `undefined` if they don't actually share
+ * one. Should never be `undefined` for edges taken from the same contiguous `RouteLeg.edgeIds`
+ * chain (`routeLeg` always builds a connected path), but checked rather than assumed — see
+ * `buildLegWaypoints`'s degrade path. Pure — exported for direct testing. */
+export function sharedNodeId(a: RoadEdge, b: RoadEdge): number | undefined {
+  if (a.from === b.from || a.from === b.to) return a.from;
+  if (a.to === b.from || a.to === b.to) return a.to;
+  return undefined;
+}
+
+/** Linearly interpolates between two lng/lat points at fraction `t` (0 = `from`, 1 = `to`) — used
+ * once per leg terminus, at route-geometry build time, to place a route's clipped end exactly at a
+ * mid-edge stop's `edgeT` fraction instead of snapping to that edge's node. Pure — exported for
+ * direct testing. Never called on the per-frame draw path (see `getLineWaypoints`'s cache below),
+ * so the small tuple allocation here is fine even though the hot draw path itself never allocates. */
+export function lerpLngLat(from: LngLat, to: LngLat, t: number): LngLat {
+  return [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t];
+}
+
+/** The point a route should pass through at one end of `edge` (named `edgeId`, since edges are
+ * looked up by id elsewhere and this avoids a second lookup): `stop`'s exact `edgeT` position on
+ * this edge if `stop` is actually anchored to it, otherwise `fallbackNodeId`'s node position (an
+ * internal joint between two edges, which has no stop and needs no clipping — or a degrade when
+ * the expected stop is missing/mismatched, matching this file's existing "skip, don't throw"
+ * idiom for a caller bug rather than a player-reachable state). */
+function edgeTerminusPoint(
+  edge: RoadEdge,
+  edgeId: number,
+  stop: Stop | undefined,
+  fallbackNodeId: number,
+  nodeIndex: ReadonlyMap<number, RoadNode>,
+): LngLat | undefined {
+  if (stop && stop.edgeId === edgeId) {
+    const fromNode = nodeIndex.get(edge.from);
+    const toNode = nodeIndex.get(edge.to);
+    if (!fromNode || !toNode) return undefined;
+    return lerpLngLat(fromNode.pos, toNode.pos, stop.edgeT);
+  }
+  return nodeIndex.get(fallbackNodeId)?.pos;
+}
+
+/**
+ * Appends one leg's ordered lng/lat waypoints to `out`: `fromStop`'s exact clipped position on the
+ * leg's first edge, the shared node at every edge-to-edge joint in between, and `toStop`'s exact
+ * clipped position on the last edge — never a raw edge endpoint at either terminus. A single-edge
+ * leg (`fromStop`/`toStop` on the same edge) pushes just its two clipped points, a straight
+ * sub-segment of that one edge. Degrades edge-by-edge — a missing edge/node in `cache`, or two
+ * consecutive edges that turn out not to share a node — by skipping or falling back to that edge's
+ * own far endpoint rather than throwing mid-frame, matching every other lookup in this module.
+ * Pure and canvas-free — exported for direct testing (the regression test for this bug fix).
+ */
+export function buildLegWaypoints(
+  leg: RouteLeg,
+  fromStop: Stop | undefined,
+  toStop: Stop | undefined,
+  edgeIndex: ReadonlyMap<number, RoadEdge>,
+  nodeIndex: ReadonlyMap<number, RoadNode>,
+  out: LngLat[],
+): void {
+  const edgeIds = leg.edgeIds;
+  const n = edgeIds.length;
+  for (let i = 0; i < n; i++) {
+    const edgeId = edgeIds[i]!;
+    const edge = edgeIndex.get(edgeId);
+    if (!edge) continue;
+    const isLast = i === n - 1;
+
+    if (i === 0) {
+      const entry = edgeTerminusPoint(edge, edgeId, fromStop, edge.from, nodeIndex);
+      if (entry) out.push(entry);
+    }
+
+    if (isLast) {
+      const exit = edgeTerminusPoint(edge, edgeId, toStop, edge.to, nodeIndex);
+      if (exit) out.push(exit);
+    } else {
+      const nextEdge = edgeIndex.get(edgeIds[i + 1]!);
+      const shared = nextEdge ? sharedNodeId(edge, nextEdge) : undefined;
+      // Degrade: no shared node found between consecutive edges (data inconsistency — should
+      // never happen for a leg `routeLeg` actually built) — fall back to this edge's own far
+      // endpoint rather than dropping the joint entirely.
+      const jointNodeId = shared !== undefined ? shared : edge.to;
+      const joint = nodeIndex.get(jointNodeId);
+      if (joint) out.push(joint.pos);
+    }
+  }
+}
+
+/** Looks up a stop by id against either shape `drawLineRoute` receives it in: the caller-owned
+ * top-level `stopsById` map (confirmed lines) or a draft's own small `stops` array (`Draft.stops`
+ * still nests full `Stop` objects — see `game/lines/types.ts`'s module comment for why). Only ever
+ * called from `getLineWaypoints`'s cache-miss branch below — i.e. rebuilding one line's geometry
+ * after an actual stop/leg edit, never on the per-frame hot path — so a linear scan for the array
+ * case is fine. */
+/** Explicit type predicate (not a bare `Array.isArray(source)` check) so both branches below
+ * narrow cleanly — `Array.isArray`'s built-in `any[]` predicate doesn't exclude `ReadonlyMap` from
+ * the union in the negative branch the way a custom `is` predicate does. */
+function isStopArray(source: ReadonlyMap<StopId, Stop> | readonly Stop[]): source is readonly Stop[] {
+  return Array.isArray(source);
+}
+
+function resolveStop(source: ReadonlyMap<StopId, Stop> | readonly Stop[], id: StopId): Stop | undefined {
+  if (isStopArray(source)) {
+    for (const stop of source) {
+      if (stop.id === id) return stop;
+    }
+    return undefined;
+  }
+  return source.get(id);
+}
+
+/** Per-line route geometry (lng/lat waypoints per leg), cached by `legs` array identity — the same
+ * WeakMap-by-object-identity idiom `lineColorCache`/`cityCache` above already use. This codebase
+ * treats a `Line`'s (and a `Draft`'s) `legs` as immutable: every stop/leg edit produces a new
+ * `legs` array rather than mutating one in place (`draft.ts` returns a new `DraftState` per call;
+ * `App.tsx`'s save-format §5 line collection is rebuilt the same way), so a cache hit here reliably
+ * means "this line has not changed since last frame" and a miss means it just did — exactly the
+ * moment it's safe to pay for edge/stop lookups and the two clipped-terminus tuple allocations,
+ * since the per-frame draw path (`drawLineRoute` below) never does either. */
+const legWaypointsCache = new WeakMap<readonly RouteLeg[], readonly (readonly LngLat[])[]>();
+
+function getLineWaypoints(
+  legs: readonly RouteLeg[],
+  stopsSource: ReadonlyMap<StopId, Stop> | readonly Stop[],
+  cache: RenderCache,
+): readonly (readonly LngLat[])[] {
+  let perLeg = legWaypointsCache.get(legs);
+  if (!perLeg) {
+    perLeg = legs.map((leg) => {
+      const waypoints: LngLat[] = [];
+      buildLegWaypoints(
+        leg,
+        resolveStop(stopsSource, leg.fromStopId),
+        resolveStop(stopsSource, leg.toStopId),
+        cache.edgeIndex,
+        cache.nodeIndex,
+        waypoints,
+      );
+      return waypoints;
+    });
+    legWaypointsCache.set(legs, perLeg);
+  }
+  return perLeg;
+}
+
+/** Strokes every leg's clipped waypoints as one continuous path + one `stroke()` call, matching
+ * `drawCity`'s one-call-per-layer discipline — a line's legs are always contiguous (`leg[i].
+ * toStopId === leg[i + 1].fromStopId` by construction, see `game/lines/types.ts`'s `Line.legs`
+ * doc comment), so the whole line is drawn as a single subpath rather than per-edge islands; that
+ * also gives `lineJoin: 'round'` a real joint to round at every intermediate stop, not just a pair
+ * of overlapping round caps. Geometry itself is resolved once per line by `getLineWaypoints`
+ * (cached — see its own comment) and clipped to each terminus stop's exact position, not the
+ * raw edge nodes either end happens to touch — see this section's module comment for the bug this
+ * fixes. `busPositionAt` (via `drawBuses` below) is the thing that places a bus exactly; this is
+ * just the infrastructure line under it. */
 function drawLineRoute(
   ctx: CanvasRenderingContext2D,
   viewport: Viewport,
   cache: RenderCache,
   legs: readonly RouteLeg[],
+  stopsSource: ReadonlyMap<StopId, Stop> | readonly Stop[],
   color: string,
 ): void {
   if (legs.length === 0) return;
 
+  const perLeg = getLineWaypoints(legs, stopsSource, cache);
+
   ctx.beginPath();
-  let drewAny = false;
-  for (const leg of legs) {
-    for (const edgeId of leg.edgeIds) {
-      const edge = cache.edgeIndex.get(edgeId);
-      if (!edge) continue;
-      const fromNode = cache.nodeIndex.get(edge.from);
-      const toNode = cache.nodeIndex.get(edge.to);
-      if (!fromNode || !toNode) continue;
-      const p0 = viewport.project(fromNode.pos[0], fromNode.pos[1], scratchA);
-      const p1 = viewport.project(toNode.pos[0], toNode.pos[1], scratchB);
-      ctx.moveTo(p0.x, p0.y);
-      ctx.lineTo(p1.x, p1.y);
-      drewAny = true;
+  let started = false;
+  for (const waypoints of perLeg) {
+    for (const point of waypoints) {
+      const p = viewport.project(point[0], point[1], scratchA);
+      if (!started) {
+        ctx.moveTo(p.x, p.y);
+        started = true;
+      } else {
+        ctx.lineTo(p.x, p.y);
+      }
     }
   }
-  if (!drewAny) return;
+  if (!started) return;
 
   ctx.strokeStyle = color;
   ctx.lineWidth = routeWidthPx(viewport);
@@ -519,8 +685,9 @@ export function drawOverlays(
   const cache = getRenderCache(city);
 
   if (hasLines) {
+    const stopsSource = stops ?? EMPTY_STOPS_MAP;
     for (const line of lines) {
-      drawLineRoute(ctx, viewport, cache, line.legs, getLineColor(palette, line.id));
+      drawLineRoute(ctx, viewport, cache, line.legs, stopsSource, getLineColor(palette, line.id));
     }
   }
 
@@ -530,7 +697,10 @@ export function drawOverlays(
     // confirmed portion honestly previews what the player is about to commit to.
     const draftLineId = lines ? lines.length : 0;
     const draftColor = getLineColor(palette, draftLineId);
-    drawLineRoute(ctx, viewport, cache, draft.legs, draftColor);
+    // `Draft.stops` still nests full `Stop` objects (see `game/lines/types.ts`) — passed directly
+    // rather than adapted into a `Map`, since `resolveStop` only ever needs it on a cache-miss
+    // rebuild (rare — see `getLineWaypoints`'s comment), so a per-frame `Map` build is never paid.
+    drawLineRoute(ctx, viewport, cache, draft.legs, draft.stops, draftColor);
     drawRubberBand(ctx, viewport, draftColor, draft, hoverLngLat);
   }
 

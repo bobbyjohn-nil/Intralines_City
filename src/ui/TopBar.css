@@ -34,6 +34,20 @@
   text-overflow: ellipsis;
 }
 
+/*
+ * `.top-bar__chips` is a flex item of `.top-bar` (min-width: 0 lets `.top-bar` squeeze it below its
+ * content width) and, in its own right, the *query container* every degradation rule below reads
+ * from — `container-type: inline-size` measures this element's own laid-out width, i.e. the space
+ * actually left over after the brand takes what it needs, rather than the viewport's width. That is
+ * what makes the rules correct at any brand-name length and any number of chips, not just today's.
+ *
+ * `overflow: hidden` is the structural backstop, not the primary mechanism: every child below has
+ * `flex-shrink: 0` (whole chips clip cleanly at an edge, never squash mid-glyph), so if a threshold
+ * below ever turns out to be wrong — a longer city name, a chip added without updating the rule — the
+ * excess is clipped at this row's own right edge instead of spilling left over `.top-bar__brand`,
+ * which is the actual defect this file was fixing. The degradation rules below exist so that clip
+ * path is never reached in practice; the backstop exists so it cannot repeat if they're ever wrong.
+ */
 .top-bar__chips {
   display: flex;
   align-items: center;
@@ -41,9 +55,12 @@
   flex: 1 1 auto;
   justify-content: flex-end;
   min-width: 0;
+  overflow: hidden;
+  container: top-bar-chips / inline-size;
 }
 
 .top-bar__clock {
+  flex-shrink: 0;
   font-variant-numeric: tabular-nums;
   color: var(--ink);
   letter-spacing: 0.01em;
@@ -53,6 +70,8 @@
   display: flex;
   align-items: center;
   gap: var(--space-1);
+  flex-shrink: 0; /* the pause + speed buttons are the 40px hit targets — never squeezed smaller,
+    a chip yields space before this does (see the priority order above .top-bar__chip). */
 }
 
 .top-bar__speed-btn {
@@ -90,10 +109,25 @@
   outline-offset: 2px;
 }
 
+/*
+ * Priority order — what degrades first as `.top-bar__chips` runs out of room, least essential first.
+ * The next chip (Drivers, Satisfaction, Coverage — manual §5) reuses <Chip> unchanged in TopBar.tsx;
+ * give it its own `.top-bar__chip--<name>` class and add that class to the list in the second
+ * `@container` rule below, newest chip first, so it is the first thing to go when space is tight:
+ *
+ *   1. Chip labels ("Cash", "Riders/day") — hidden first; the bare value still reads at a glance
+ *      once a player knows the bar's layout, and this alone recovers most of the deficit.
+ *   2. Optional chips in full (Riders/day today; Drivers/Satisfaction/Coverage once built), newest
+ *      first — dropped whole rather than truncated, so nothing half-renders.
+ *   3. The clock, the speed control and the Cash chip are never hidden by width. They are
+ *      load-bearing (manual §5 calls the clock and cash out by name) and structurally protected by
+ *      `flex-shrink: 0` above/below — a chip gives way before these do.
+ */
 .top-bar__chip {
   display: flex;
   align-items: baseline;
   gap: var(--space-1);
+  flex-shrink: 0;
   font-variant-numeric: tabular-nums;
 }
 
@@ -130,8 +164,39 @@
   }
 }
 
-@media (max-width: 640px) {
+/*
+ * Degradation, in the priority order documented above `.top-bar__chip`. These read the width of
+ * `.top-bar__chips` itself (declared as the `top-bar-chips` container above), not the viewport — the
+ * viewport-width media query this replaced hid labels at ≤640px, but the reported defect measured
+ * ~555px of *actual available space* at a 688px viewport (the ~50px "Riverton" brand plus its ~14px
+ * gap already spent), so a viewport breakpoint could never track it — a longer city name spends more
+ * of the 688px and needs to hit this same rule sooner, which only container size, not viewport size,
+ * sees. Thresholds below are sized off that one measured data point (~555px available, ~613px of
+ * content needed with every chip shown, a ~58px deficit) plus a margin, since a browser wasn't
+ * available to measure the rest directly — `playtester` should confirm the exact crossover widths and
+ * this comment's numbers stay accurate as chips are added.
+ */
+@container top-bar-chips (max-width: 640px) {
+  /* Stage 1 — labels go first. Recovers the most width for the least loss: values alone still read
+     once a player knows the bar. */
   .top-bar__chip-label {
     display: none;
+  }
+}
+
+@container top-bar-chips (max-width: 540px) {
+  /* Stage 2 — the newest optional chip goes whole. Riders/day today; when Drivers, Satisfaction or
+     Coverage land, the newest one added takes this spot and Riders/day moves to its own, wider rule
+     above this one (see the priority-order comment above `.top-bar__chip`). */
+  .top-bar__chip--riders {
+    display: none;
+  }
+}
+
+@container top-bar-chips (max-width: 420px) {
+  /* Stage 3 — last resort before the `overflow: hidden` backstop clips: tighten the row's own gap
+     rather than remove anything else load-bearing. The clock, speed control and Cash chip stay. */
+  .top-bar__chips {
+    gap: var(--space-2);
   }
 }

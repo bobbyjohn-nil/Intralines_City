@@ -39,7 +39,12 @@ export interface DemandBuffers {
   readonly zoneDistM: Float32Array;
   /** A3: car time at the city's car speed ×1.3 + 10 min parking, `carMinutes[i*Z+j]`. Length Z². */
   readonly carMinutes: Float32Array;
-  /** A5, gravity O–D, trips/day, singly constrained on `zoneProd[i]`. Length Z². */
+  /** A5, gravity O–D, one-way *commuter* flow/day (home→job), singly constrained on
+   * `zoneProd[i]` — `Σ_j odCommute[i*Z+j] == zoneProd[i]`. Deliberately not doubled for the
+   * return trip here; `TRIPS_PER_COMMUTER_PER_DAY` is applied once, downstream, at the one place
+   * this buffer is actually spent as trips/day (`demand.ts`'s B7 assignment) — see that
+   * constant's doc comment for why doubling it in this buffer would be the wrong layer. Length
+   * Z². */
   readonly odCommute: Float64Array;
 
   // ── Stage B — network recompute, rebuilt every call from the current `lines`/`stops`. ───────

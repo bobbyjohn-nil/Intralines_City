@@ -214,6 +214,34 @@ describe('demand model — first shippable slice', () => {
     expect(result.boardingsPerLine[0]).toBeGreaterThan(0);
   });
 
+  it('pins the order of magnitude for a known good line — catches a silent 100x ridership drop', () => {
+    // First-principles arithmetic for this exact fixture (buildFixtureCity(6)'s default split):
+    // 3 residential zones at 1000 residents each + 3 job zones at 1000 jobs each = 3300 residents.
+    // Commuters = 3300 * WORKFORCE_RATE(0.49) = 1617/day. Each commuter makes a trip out AND a
+    // trip back (TRIPS_PER_COMMUTER_PER_DAY), so total trips/day = 3234 — this is the number a
+    // regression that drops the round-trip factor would silently halve.
+    // A single line stopping at all 6 zone centroids gives every O-D pair a direct, walk-free
+    // path (round-1, no transfers needed), so the logit should clear a strong majority share —
+    // this is the "one good cross-town line" case demand-model.md's "riders who chose the bus for
+    // a reason they can read back" is about. Order of magnitude: **thousands**, not the tens a
+    // missing round-trip factor or a broken walk-access CSR would produce, and nowhere near the
+    // hundred-thousands a doubled-up gravity normalisation would produce.
+    const city = buildFixtureCity(6);
+    const stops = [0, 1, 2, 3, 4, 5].map((i) => makeStop(i, i));
+    const line = makeLine(0, stops.map((s) => s.id), [0, 1, 2, 3, 4, 5]);
+
+    const result = computeDemandForCity(city, [line], stops, RIVERTON_CAR_SPEED_KMH);
+
+    expect(result.totalTripsPerDay).toBeCloseTo(3234, 0);
+    // Pinned to order of magnitude (measured today: ~1,951) rather than exact equality, so minor
+    // future tuning of the logit/wait constants doesn't make this test brittle — but a 100x drop
+    // (~20) or 100x blowup (~200,000) both fail loudly.
+    expect(result.totalBoardingsPerDay).toBeGreaterThan(1000);
+    expect(result.totalBoardingsPerDay).toBeLessThan(2500);
+    expect(result.busSharePerDay).toBeGreaterThan(0.4);
+    expect(result.busSharePerDay).toBeLessThan(0.7);
+  });
+
   it('measures the buffers footprint at a realistic capacity', () => {
     const buffers = createDemandBuffers(96, 200, 24);
     const bytes = demandBuffersByteLength(buffers);

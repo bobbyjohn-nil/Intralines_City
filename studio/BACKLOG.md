@@ -21,6 +21,11 @@ Goal: a bus drives a line you drew, on a fake city, and it costs money. No real 
 drawing, bus motion and the money floor all ship and are verified in a browser. Everything below is
 follow-up work found while building it.
 
+**Found verifying Milestone 2 (2026-08-12):**
+
+- [ ] **The sim is not in a worker.** `GAME.md`'s stack table states "Web Worker, debounced ~250 ms on network change" and the manual says the same; `computeDemand` actually runs on the main thread via `setTimeout` in `App.tsx`. No long tasks were measured at Riverton's scale (96 zones, 8 lines) so it is not hurting yet — but `ZONE_CAP = 512` is 5× the zones and the spec's own note says that scale is "reasoning, not measurement". Either move it to a worker or correct the documentation; a stack table that describes a worker nobody built is worse than either
+- [ ] Possible input lag after a rapid burst of line drawing — UI caught up ~1 s late, but `PerformanceObserver` recorded **zero** long tasks over the same window, so it may be automation-harness latency rather than game jank. Unresolved; needs a human hand on a real mouse
+
 **Requested 2026-08-12:**
 
 - [ ] **Route lines overshoot their terminus stops.** The coloured route stroke runs past the first and last stop instead of ending at them. Likely cause: `drawRoutes` renders each leg's `edgeIds` as whole edges, but a stop sits at `edgeT` *along* an edge — the terminal edges need trimming to the stop's position, not drawing end to end. Check the mid-route stops too; if intermediate stops sit mid-edge the same overshoot may exist at every corner and only be visible at the ends

@@ -380,6 +380,14 @@ export function App() {
   // never on every render and never on a clock tick (`lines`/`stops` only change via a draft
   // commit, never per frame).
   useEffect(() => {
+    if (lines.length === 0) {
+      // No lines drawn yet: there is nothing to count, and that's a different state from "hasn't
+      // computed yet" or "computed to zero" — Stage B never runs, so `computeDemand` never gets a
+      // chance to turn "no answer" into a misleadingly real-looking 0. Also covers the player
+      // deleting every line after having some: back to no figure at all, not a stale one.
+      setRidersPerDay(undefined);
+      return;
+    }
     const timer = window.setTimeout(() => {
       if (stops.length > demand.buffers.stopCapacity || lines.length > demand.buffers.lineCapacity) {
         // The session's network outgrew the buffers Riverton started with — `computeDemand`'s
