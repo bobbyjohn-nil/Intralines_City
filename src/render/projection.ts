@@ -26,8 +26,22 @@ export const REFERENCE_PIXELS_PER_METER = 0.1;
 export const MIN_ZOOM = 2;
 export const MAX_ZOOM = 22;
 
-/** Padding kept around fitted bounds so the dashed boundary itself is never clipped. TUNE */
+/** Padding kept off the filling axis's edge in `fitToBounds`, so the dashed boundary on that side
+ * is never clipped flush against the canvas frame. The non-filling axis is not padded — it
+ * overflows the viewport by design (see `fitToBounds`) and is reached by panning, not by fitting
+ * it on-screen. TUNE */
 export const DEFAULT_FIT_PADDING_PX = 40;
+
+/**
+ * The most empty void `clampToBounds` ever lets the viewport show beyond the city's edge, in
+ * screen pixels — the player can pan until only this much grey mask is visible past the dashed
+ * boundary, then no further; a hard stop with a little breathing room, not a hard stop flush
+ * against the last pixel of paper. Chosen as a multiple of `DEFAULT_FIT_PADDING_PX`: comfortably
+ * wider than the fit padding alone so the two don't read as the exact same edge, but still small
+ * relative to a typical viewport, so it doesn't meaningfully eat into how far the player can pan
+ * before hitting it. TUNE
+ */
+export const PAN_CLAMP_MARGIN_PX = DEFAULT_FIT_PADDING_PX * 3;
 
 const DEG_TO_RAD = Math.PI / 180;
 
@@ -47,6 +61,19 @@ export interface MutableLngLat {
 
 function clamp(value: number, min: number, max: number): number {
   return value < min ? min : value > max ? max : value;
+}
+
+/**
+ * Same as `clamp`, but when `min` exceeds `max` — the clamp range has inverted, which
+ * `clampToBounds` hits once the viewport (plus margin) is wider/taller than the city itself —
+ * returns their midpoint instead of an arbitrary endpoint. That midpoint always works out to the
+ * city's own centre on that axis (the margin and half-viewport terms that produced `min`/`max`
+ * cancel out symmetrically), so a single formula both restrains panning while the city
+ * overflows the viewport and recentres it once zoomed out past that point, with no branch for
+ * "am I zoomed out enough to see it all" needed.
+ */
+function clampAxis(value: number, min: number, max: number): number {
+  return min > max ? (min + max) / 2 : clamp(value, min, max);
 }
 
 // ── Viewport ─────────────────────────────────────────────────────────────────
@@ -135,6 +162,47 @@ export class Viewport {
   }
 
   /**
+   * Clamps `centerLng`/`centerLat` so the viewport can never show more than `marginPx` of empty
+   * void beyond the city's edge on a given side — the standard "max bounds" pattern (as in e.g.
+   * Leaflet's `maxBounds`), expressed directly in this viewport's own coordinates. Exists because
+   * `fitToBounds` now fills the viewport rather than fitting inside it (see its own doc comment) —
+   * the whole point of a fill is that part of the city sits off-screen, which must stay
+   * *recoverable* by panning back, not become a way to pan the city away into void entirely.
+   *
+   * Not applied inside `panBy`/`zoomAt` themselves — those stay pure, exact, and bounds-agnostic
+   * (see their tests, which call them with no bounds at all); callers that have a city's bounds in
+   * hand call this once afterward. `zoomAt` in particular must stay unclamped internally, or its
+   * own anchor-stays-under-the-cursor guarantee would be silently overridden by a clamp mid-call.
+   *
+   * The `+halfViewportDeg` (not `-`) is the load-bearing detail: it's what makes the valid
+   * `centerLng`/`centerLat` range *shrink* as the viewport grows relative to the city (zooming
+   * out), collapsing — via `clampAxis`'s inverted-range fallback — to exactly the city's own
+   * centre once the viewport (plus margin) is wide/tall enough to contain the whole city on that
+   * axis. That is precisely the zoomed-far-out, whole-city-visible case, so this recentres
+   * automatically right when a "show me the whole city" zoom-out needs it to, rather than fighting
+   * it with a stale off-centre pan.
+   */
+  clampToBounds(bounds: Bounds, marginPx: number = PAN_CLAMP_MARGIN_PX): void {
+    const s = this.scale();
+    const mLng = this.metersPerDegreeLng();
+    const halfViewportLngDeg = this.width / 2 / s / mLng;
+    const halfViewportLatDeg = this.height / 2 / s / METERS_PER_DEGREE_LAT;
+    const marginLngDeg = marginPx / s / mLng;
+    const marginLatDeg = marginPx / s / METERS_PER_DEGREE_LAT;
+
+    this.centerLng = clampAxis(
+      this.centerLng,
+      bounds.west - marginLngDeg + halfViewportLngDeg,
+      bounds.east + marginLngDeg - halfViewportLngDeg,
+    );
+    this.centerLat = clampAxis(
+      this.centerLat,
+      bounds.south - marginLatDeg + halfViewportLatDeg,
+      bounds.north + marginLatDeg - halfViewportLatDeg,
+    );
+  }
+
+  /**
    * The lng/lat rectangle currently visible, expanded by `marginPx` of screen padding. Used to
    * cull scenery before projecting every vertex. Allocates one object — call at most once per
    * draw, not per feature.
@@ -152,7 +220,22 @@ export class Viewport {
     };
   }
 
-  /** A viewport centred on `bounds`, zoomed to fit it inside `width`x`height` minus padding. */
+  /**
+   * A viewport centred on `bounds`, zoomed to *fill* `width`x`height` minus padding — a "cover"
+   * fit, not a "contain" fit. Scale is taken from whichever axis needs the *larger* pixels-per-
+   * metre ratio to fully cover the viewport on that axis (`Math.max`, not `Math.min`): that is the
+   * axis that ends up flush with the (padded) viewport edge, while the other axis necessarily
+   * overflows past the viewport's edges, reachable by panning (see `clampToBounds`, which keeps
+   * that overflow recoverable rather than lose-the-map-forever).
+   *
+   * DESIGN (explicit call, not an oversight): a map application fills its window and lets the
+   * player pan; boxing the whole city into a fraction of a landscape window — the previous
+   * "contain" behaviour — read as a small image floating in a mostly-empty frame and suppressed
+   * the legibility of buses, parks and the road hierarchy (independently correct fixes to each of
+   * those, all still too small to read at the default view). The zoomed-out whole-city view this
+   * replaces is still reachable — it's just a zoom-out gesture away, not the default — see
+   * `zoomAt`'s own doc and `projection.test.ts`'s "whole-city view is still reachable" case.
+   */
   static fitToBounds(
     bounds: Bounds,
     width: number,
@@ -166,7 +249,7 @@ export class Viewport {
     const heightM = Math.max(1, (bounds.north - bounds.south) * METERS_PER_DEGREE_LAT);
     const availW = Math.max(1, width - paddingPx * 2);
     const availH = Math.max(1, height - paddingPx * 2);
-    const pxPerMeter = Math.min(availW / widthM, availH / heightM);
+    const pxPerMeter = Math.max(availW / widthM, availH / heightM);
     // REFERENCE_PIXELS_PER_METER * 2^(zoom - REFERENCE_ZOOM) = pxPerMeter
     const zoom = REFERENCE_ZOOM + Math.log2(pxPerMeter / REFERENCE_PIXELS_PER_METER);
     return new Viewport(centerLng, centerLat, zoom, width, height);

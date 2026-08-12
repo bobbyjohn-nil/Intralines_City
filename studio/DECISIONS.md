@@ -430,6 +430,30 @@ one property that made all of that moot went unchecked through three playtests.
 *Now a regression test:* `fitToBounds` must place the bounds across at least a stated fraction of the
 smaller viewport axis, at several aspect ratios.
 
+**61. The map fills the window; it does not letterbox** (2026-08-12)
+`fitToBounds` did a "contain" fit — the whole city visible, which for a square city in a landscape
+window is height-constrained. Result: a 428 px city in a 1317 px canvas, two-thirds of the screen
+flat tan (measured: 484k of 668k pixels were void). Now it covers: the city spans the viewport and
+extends past it, reachable by panning, with the camera clamped so the city always stays on screen.
+*An earlier pass called this letterbox "unavoidable and correct".* It was mathematically correct and
+behaviourally wrong. **Map applications fill their window and let you pan; image viewers letterbox.**
+The out-of-bounds mask and dashed boundary already exist so the city's edge reads properly when the
+viewport extends past it — the design already assumed this.
+*This was the fifth and last cause of the bus-visibility bug,* and it suppressed parks and the road
+hierarchy at the same time. Everything drawn on the map was correct; all of it was drawn at a third
+of the size it should have been.
+
+**62. Five causes, one symptom, and what actually found them** (2026-08-12)
+In order: fixed marker pixels with no zoom scaling → fill with no stroke → a mount-time race baking
+the zoom against a transitional rect → the route line as wide as the bus, wearing the bus stripe's
+exact colour → a contain fit boxing the map into a third of the window.
+*What did not work:* fixing the most visible thing and re-verifying. Three passes did that.
+*What worked:* ruling out. The fourth playtest confirmed the bus was drawn, drawn last, correctly
+sized, animating, in service hours, with a non-zero count — and only then asked what remained. The
+fifth measured the void's pixel share and named the fit.
+*Each cause is now guarded by an assertion*, because every one of them survived at least one pass
+that had verified everything except the property that mattered.
+
 ## Process
 
 **20. Nothing enters the changelog until `playtester` has run it** (2026-08-12)

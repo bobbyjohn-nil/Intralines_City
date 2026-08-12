@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_ZOOM, METERS_PER_DEGREE_LAT, MIN_ZOOM, Viewport } from './projection';
+import {
+  DEFAULT_FIT_PADDING_PX,
+  MAX_ZOOM,
+  METERS_PER_DEGREE_LAT,
+  MIN_ZOOM,
+  PAN_CLAMP_MARGIN_PX,
+  REFERENCE_PIXELS_PER_METER,
+  REFERENCE_ZOOM,
+  Viewport,
+} from './projection';
 import type { MutableLngLat, ScreenPoint } from './projection';
 import type { Bounds } from '../game/types';
 
@@ -129,53 +138,61 @@ describe('panBy', () => {
   });
 });
 
+/** Bounds whose real-world extent is a perfect square in metres — matching this game's actual
+ * city packs (see `generateRiverton`), so scale is isotropic (the same pixels-per-metre on both
+ * axes) regardless of the viewport's own aspect ratio, making the assertions below unambiguous. */
+function squareBounds(centerLat: number, sideM: number): Bounds {
+  const halfLatDeg = sideM / 2 / METERS_PER_DEGREE_LAT;
+  const mLng = METERS_PER_DEGREE_LAT * Math.cos((centerLat * Math.PI) / 180);
+  const halfLngDeg = sideM / 2 / mLng;
+  return {
+    west: -halfLngDeg,
+    east: halfLngDeg,
+    south: centerLat - halfLatDeg,
+    north: centerLat + halfLatDeg,
+  };
+}
+
 describe('fitToBounds', () => {
-  it('centers on the bounds and fits them within the padded viewport', () => {
+  it('centers on the bounds and scales from the filling (not the fitting) axis', () => {
     const bounds = { west: -71.1, south: 41.55, east: -71.0, north: 41.65 };
-    const viewport = Viewport.fitToBounds(bounds, 1000, 800, 40);
+    const width = 1000;
+    const height = 800;
+    const padding = 40;
+    const viewport = Viewport.fitToBounds(bounds, width, height, padding);
 
     expect(viewport.centerLng).toBeCloseTo((bounds.west + bounds.east) / 2, 9);
     expect(viewport.centerLat).toBeCloseTo((bounds.south + bounds.north) / 2, 9);
 
-    const nw: ScreenPoint = { x: 0, y: 0 };
-    const se: ScreenPoint = { x: 0, y: 0 };
-    viewport.project(bounds.west, bounds.north, nw);
-    viewport.project(bounds.east, bounds.south, se);
+    // Recompute the expected "cover" scale directly (the larger of the two axis ratios, not the
+    // smaller) and check the viewport actually used it.
+    const centerLat = (bounds.south + bounds.north) / 2;
+    const mLng = METERS_PER_DEGREE_LAT * Math.cos((centerLat * Math.PI) / 180);
+    const widthM = (bounds.east - bounds.west) * mLng;
+    const heightM = (bounds.north - bounds.south) * METERS_PER_DEGREE_LAT;
+    const expectedPxPerMeter = Math.max((width - padding * 2) / widthM, (height - padding * 2) / heightM);
 
-    // The whole bounds rectangle should land inside the canvas (padding keeps it off the edge).
-    expect(nw.x).toBeGreaterThanOrEqual(0);
-    expect(nw.y).toBeGreaterThanOrEqual(0);
-    expect(se.x).toBeLessThanOrEqual(1000);
-    expect(se.y).toBeLessThanOrEqual(800);
+    expect(viewport.scale()).toBeCloseTo(expectedPxPerMeter, 6);
   });
 
-  // Regression guard for the "initial scale" bug: `fitToBounds` itself was never wrong (see the
-  // render task's writeup), but nothing asserted that its *result* actually fills most of the
-  // viewport — so a real bug elsewhere (MapCanvas seeding the fit from a stale, transitional rect)
-  // survived three playtests before anyone measured the on-screen size rather than just the maths.
-  // This is that missing assertion: across several viewport shapes, including a very wide one (the
-  // exact 1317x507 case from the bug report), a city's bounds must occupy at least a stated
-  // fraction of the *smaller* viewport axis — never a speck centered in a void.
-  describe('fills the viewport it is given (regression: initial-scale bug)', () => {
-    /** A city occupying less than this fraction of the smaller viewport axis reads as "a speck in
-     * a void" at a glance — this is the number that should fail if excess margin is reintroduced
-     * (a stale rect upstream, a much bigger padding constant, fitting the wrong axis, etc). TUNE */
-    const MIN_FIT_FRACTION_OF_SMALLER_AXIS = 0.6;
-
-    /** Bounds whose real-world extent is a perfect square in metres — matching this game's actual
-     * city packs (see `generateRiverton`), so a correct "contain" fit renders a square on screen
-     * regardless of the viewport's own aspect ratio, making the assertions below unambiguous. */
-    function squareBounds(centerLat: number, sideM: number): Bounds {
-      const halfLatDeg = sideM / 2 / METERS_PER_DEGREE_LAT;
-      const mLng = METERS_PER_DEGREE_LAT * Math.cos((centerLat * Math.PI) / 180);
-      const halfLngDeg = sideM / 2 / mLng;
-      return {
-        west: -halfLngDeg,
-        east: halfLngDeg,
-        south: centerLat - halfLatDeg,
-        north: centerLat + halfLatDeg,
-      };
-    }
+  // Regression guard for the "initial scale" bug and its follow-up letterbox fix: `fitToBounds`
+  // itself was never wrong at the maths level (see the render task's writeup), but nothing
+  // asserted that its *result* actually fills most of the viewport — first because a bug
+  // elsewhere fed it a stale rect, then because the "contain" fit it used to compute was itself
+  // the wrong default for a map the player is meant to pan around (SPEC: "a map application fills
+  // its window ... this is a map"). This is the assertion that encodes that intent directly: at
+  // several viewport shapes, including the exact 1317x507 case from the bug report, the city must
+  // cover a stated fraction of the viewport's *area* — never a speck (or a boxed square) centered
+  // in a void.
+  describe('fills the viewport it is given (regression: initial-scale / letterbox bug)', () => {
+    /** A city covering less than this fraction of the viewport's *area* still reads as boxed-in
+     * at a glance — this is the number that should fail if excess margin is reintroduced (a stale
+     * rect upstream, a much bigger padding constant, reverting to a "contain" fit, etc). Measured
+     * fraction across the cases below ranges ~0.81 (the square-viewport case, where the window's
+     * aspect ratio exactly matches the city's own and both axes bind simultaneously — cover and
+     * contain coincide there, which is the true worst case, not a bug) to ~0.97 (21:9); 0.8 stays
+     * a real regression trip-wire without failing that legitimate worst case. TUNE */
+    const MIN_FIT_AREA_FRACTION = 0.8;
 
     // ~6.4km on a side, the same order of magnitude as the real Riverton pack.
     const bounds = squareBounds(41.6, 6400);
@@ -197,11 +214,109 @@ describe('fitToBounds', () => {
         viewport.project(bounds.east, bounds.south, se);
         const fittedWidth = se.x - nw.x;
         const fittedHeight = se.y - nw.y;
-        const smallerAxis = Math.min(width, height);
 
+        // Isotropic scale on square bounds: the fitted rectangle is itself a square, on every
+        // viewport shape, whether or not that square is bigger than the viewport on either axis.
         expect(fittedWidth).toBeCloseTo(fittedHeight, 1);
-        expect(fittedWidth / smallerAxis).toBeGreaterThanOrEqual(MIN_FIT_FRACTION_OF_SMALLER_AXIS);
+
+        // The city fills at least one axis completely (that's the point of "cover") and is at
+        // worst padding-inset on the other — never boxed into a fraction of the canvas.
+        const coveredWidth = Math.min(fittedWidth, width);
+        const coveredHeight = Math.min(fittedHeight, height);
+        const areaFraction = (coveredWidth * coveredHeight) / (width * height);
+
+        expect(areaFraction).toBeGreaterThanOrEqual(MIN_FIT_AREA_FRACTION);
+        // And the larger fitted dimension must reach all the way out to the padded edge of its
+        // viewport axis — the defining trait of "cover" versus "contain": one dimension always
+        // meets the (padded) viewport bound, never both falling short simultaneously the way a
+        // contain fit's non-binding axis used to.
+        const largestAvailAxis = Math.max(width, height) - DEFAULT_FIT_PADDING_PX * 2;
+        expect(Math.max(fittedWidth, fittedHeight)).toBeCloseTo(largestAvailAxis, 1);
       });
     }
+  });
+
+  it('the reachable zoom range comfortably brackets a whole-city (contain-style) view below the default fill', () => {
+    // The zoom-out escape (see the `clampToBounds` describe block below) depends on there being
+    // room, between the cover-fit default and MIN_ZOOM, for a "whole city visible at once" zoom —
+    // this pins that down independent of any pan/zoom simulation.
+    const bounds = squareBounds(41.6, 6400);
+    const width = 1317;
+    const height = 507;
+    const viewport = Viewport.fitToBounds(bounds, width, height);
+
+    const centerLat = (bounds.south + bounds.north) / 2;
+    const mLng = METERS_PER_DEGREE_LAT * Math.cos((centerLat * Math.PI) / 180);
+    const widthM = (bounds.east - bounds.west) * mLng;
+    const heightM = (bounds.north - bounds.south) * METERS_PER_DEGREE_LAT;
+    // The old "contain" formula, unpadded (a generous/largest-possible contain zoom) — used only
+    // to locate where a whole-city view sits, not as a claim about current default behaviour.
+    const containPxPerMeter = Math.min(width / widthM, height / heightM);
+    const containZoom = REFERENCE_ZOOM + Math.log2(containPxPerMeter / REFERENCE_PIXELS_PER_METER);
+
+    expect(containZoom).toBeGreaterThan(MIN_ZOOM);
+    expect(containZoom).toBeLessThan(viewport.zoom);
+  });
+});
+
+describe('clampToBounds', () => {
+  it('caps the void shown beyond the city edge (and so keeps the bounds intersecting the viewport) after an extreme pan', () => {
+    const bounds = squareBounds(41.6, 6400);
+    const viewport = Viewport.fitToBounds(bounds, 1317, 507);
+
+    // An unreasonably large drag in both axes — the kind of input a real pointer drag never
+    // produces in one event, but the clamp must hold regardless of how it got there.
+    viewport.panBy(1_000_000, 1_000_000);
+    viewport.clampToBounds(bounds);
+
+    const nw: ScreenPoint = { x: 0, y: 0 };
+    const se: ScreenPoint = { x: 0, y: 0 };
+    viewport.project(bounds.west, bounds.north, nw);
+    viewport.project(bounds.east, bounds.south, se);
+
+    // The city's bounding rectangle must still overlap the viewport at all...
+    expect(se.x).toBeGreaterThan(0);
+    expect(nw.x).toBeLessThan(viewport.width);
+    expect(se.y).toBeGreaterThan(0);
+    expect(nw.y).toBeLessThan(viewport.height);
+
+    // ...and specifically, the void this particular (positive, positive) drag pushed the city
+    // away from — its near (north-west) edge — must sit exactly `PAN_CLAMP_MARGIN_PX` inside the
+    // viewport, not have drifted arbitrarily further off toward the edge the drag was headed.
+    expect(nw.x).toBeCloseTo(PAN_CLAMP_MARGIN_PX, 2);
+    expect(nw.y).toBeCloseTo(PAN_CLAMP_MARGIN_PX, 2);
+  });
+
+  it('does not fight the zoom-out escape: zooming toward MIN_ZOOM still reaches a whole-city view', () => {
+    const bounds = squareBounds(41.6, 6400);
+    const viewport = Viewport.fitToBounds(bounds, 1317, 507);
+    const cityCenterLng = (bounds.west + bounds.east) / 2;
+    const cityCenterLat = (bounds.south + bounds.north) / 2;
+
+    // Pan off-center first, the way a real session would before reaching for the zoom-out escape,
+    // clamping after each step the way `MapCanvas` does after every user pan/zoom.
+    viewport.panBy(4000, -3000);
+    viewport.clampToBounds(bounds);
+
+    for (let i = 0; i < 200 && viewport.zoom > MIN_ZOOM; i++) {
+      viewport.zoomAt(0.85, viewport.width / 2, viewport.height / 2);
+      viewport.clampToBounds(bounds);
+    }
+
+    expect(viewport.zoom).toBeCloseTo(MIN_ZOOM, 5);
+
+    // At MIN_ZOOM the whole city must be visible — the clamp must have recentred rather than
+    // pinned the camera at whatever off-center position the pan/zoom-out sequence left it at.
+    const nw: ScreenPoint = { x: 0, y: 0 };
+    const se: ScreenPoint = { x: 0, y: 0 };
+    viewport.project(bounds.west, bounds.north, nw);
+    viewport.project(bounds.east, bounds.south, se);
+    expect(nw.x).toBeGreaterThanOrEqual(-0.5);
+    expect(nw.y).toBeGreaterThanOrEqual(-0.5);
+    expect(se.x).toBeLessThanOrEqual(viewport.width + 0.5);
+    expect(se.y).toBeLessThanOrEqual(viewport.height + 0.5);
+
+    expect(viewport.centerLng).toBeCloseTo(cityCenterLng, 6);
+    expect(viewport.centerLat).toBeCloseTo(cityCenterLat, 6);
   });
 });

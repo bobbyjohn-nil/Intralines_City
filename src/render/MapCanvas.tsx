@@ -185,6 +185,10 @@ export function MapCanvas({
         // preserve it, only the frame around it changes.
         viewport.width = cssWidth;
         viewport.height = cssHeight;
+        // A resize can change the viewport's own aspect ratio out from under a manually-panned
+        // position (e.g. a side panel opening narrows the map) — re-clamp so that never stands up
+        // a previously-valid pan into one that now shows nothing but void.
+        viewport.clampToBounds(cityRef.current.bounds);
       } else {
         // No manual pan/zoom yet: always (re)compute a full fit against the size actually
         // observed now, so the very first thing the player sees is correct no matter when layout
@@ -277,6 +281,11 @@ export function MapCanvas({
         // Dragging the map right should slide the world right under the cursor, i.e. pan the
         // viewport center left — panBy takes a screen-space delta of that opposite sign.
         viewportRef.current.panBy(-dx, -dy);
+        // Cover-fit (see `fitToBounds`) means the city routinely overflows the viewport by
+        // design — clamp keeps that overflow recoverable instead of letting a drag pan the city
+        // away into void forever. See `clampToBounds`'s doc for the margin and the zoomed-out
+        // escape it deliberately doesn't fight.
+        viewportRef.current.clampToBounds(cityRef.current.bounds);
         hasUserAdjustedViewportRef.current = true;
         dirtyRef.current = true;
       }
@@ -311,6 +320,9 @@ export function MapCanvas({
       const screenY = event.clientY - rect.top;
       const factor = Math.exp(-event.deltaY * WHEEL_ZOOM_SENSITIVITY);
       viewportRef.current.zoomAt(factor, screenX, screenY);
+      // See the pan handler above: keeps a zoom-out-then-zoom-back-in gesture from stranding the
+      // camera somewhere the earlier pan clamp would have prevented outright.
+      viewportRef.current.clampToBounds(cityRef.current.bounds);
       hasUserAdjustedViewportRef.current = true;
       dirtyRef.current = true;
     };
