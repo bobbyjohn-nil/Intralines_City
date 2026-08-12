@@ -39,8 +39,6 @@ commuters decide whether your service beats driving.
 
 ## Stack
 
-| | |
-|---|---|
 Stated in the manual where marked; otherwise **[chosen]** — a default picked to fit the manual's
 evidence. Change any `[chosen]` row before implementation starts and the rest of the crew follows.
 
@@ -52,11 +50,12 @@ evidence. Change any `[chosen]` row before implementation starts and the rest of
 | UI framework | **[chosen]** React — the manual says menus are "portaled outside the dock", which is React's idiom |
 | Map rendering | MapLibre GL JS **[chosen]** for OpenFreeMap vector tiles restyled to the paper palette with 3D extrusions — *the tile source is stated*; **plus** a self-rendered offline basemap from the city pack — *stated* |
 | 3D (buses, station diorama) | **[chosen]** Three.js, via a custom MapLibre layer for on-map buses |
+| 3D model format | **[chosen]** glTF 2.0 binary (`.glb`) — one file per model, geometry and materials together. Authored elsewhere and imported; see **Imported 3D models** below. `.fbx`, `.blend` and `.obj` are accepted at the inbox and converted, never shipped. |
 | Simulation | Web Worker, debounced ~250 ms on network change — *stated* |
 | Persistence | One save per city in `localStorage`; city packs (10–40 MB) in IndexedDB under a format version — *stated* |
 | Tests | **[chosen]** Vitest |
 | Data sources | TIGERweb block groups, ACS/LODES population and jobs, OpenStreetMap streets/water/parks/landuse, FHWA/BTS AADT traffic counts — *stated* |
-| Distribution | **TBD** |
+| Distribution | **[chosen]** A static directory — `index.html` plus hashed asset files — served from any host and cacheable by the service worker. Models ship as separate `.glb` files, never inlined: a base64 model is about a third larger and does not gzip. |
 
 ## Build & run
 
@@ -121,6 +120,36 @@ bundled, imported, or shipped. The game's own source layout beyond `src/game/con
   green / walk blue / bike amber. Traffic forecast tints green→red.
 - Map tints with time of day; buses run headlights and lit windows at night.
 - Buses wear the company brand color with a full-length stripe in the line's color.
+
+## Imported 3D models
+
+Models are authored outside this repo and brought in. The inbox is
+[`studio/assets/incoming/`](assets/incoming/README.md) — drop a file there, say in one line what it
+is, and `modeler` checks scale, axis, origin, materials and triangle count, then places it. The inbox
+is not storage; processed files move into the game's asset directory.
+
+Four rules the crew holds imported models to, each one a thing that is cheap now and expensive later:
+
+- **`.glb` is what ships.** Other formats are accepted at the inbox and converted there. A conversion
+  that happens at build time, every build, is a conversion nobody has looked at.
+- **Git LFS is already active and `.glb`, `.fbx` and `.blend` are already tracked** — see
+  `.gitattributes`. Adding a new binary type means editing that file **before** the first file of that
+  type is committed. Retrofitting LFS means rewriting history, and until someone does, the file sits
+  at full size in the repo for ever.
+- **The renderer is never load-bearing for the simulation.** A model that failed to load changes what
+  you can see and nothing else — never a number, never a save, never a report card. The sim runs in a
+  Worker and does not know models exist.
+- **The city is playable before the models arrive.** The manual's own loading story is a staged
+  screen in front of a 10–40 MB pack, and that is the part of v1.18 worth beating rather than
+  reproducing. Models load after the map is interactive, and a bus with no model yet is a bus you
+  cannot see, not a screen you cannot use.
+
+**Two things about lighting, because they are decisions and not details.** The palette above is
+specified as flat paper colours, and a colour is not the same colour once a light hits it — whatever
+contrast rule the UI holds itself to has to be measured on the lit result or it is measuring nothing.
+And the manual's own help text has to teach players to tilt the map, which is the tell that its best
+content sits behind a gesture; anything a camera can do here needs a keyboard route as well as a
+mouse one.
 
 ## Audio
 
