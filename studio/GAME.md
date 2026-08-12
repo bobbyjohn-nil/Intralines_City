@@ -98,6 +98,43 @@ bundled, imported, or shipped. The game's own source layout beyond `src/game/con
 > `studio/CHANGELOG.md` is the crew's internal record. It is **not** the player-facing changelog the
 > game displays in its home menu — that one lives with the game and is written for players.
 
+## Hard constraints
+
+These two shape every technical decision. Neither is negotiable.
+
+### Offline is a requirement, not a feature
+
+After the first load the game must work with the network cable pulled. No feature may depend on a
+server at play time — no remote sim, no API call in a gameplay path, no font or asset fetched on
+demand. Anything from the network is fetched once, cached deliberately (service worker for code,
+IndexedDB for city packs), and has a working offline fallback. The self-rendered basemap exists for
+exactly this reason: a real city must still render with zero network.
+
+**Test the offline path, not just the online one.** A feature verified only with a live connection is
+unverified. `playtester` checks both.
+
+### The simulation must stay portable to WebAssembly
+
+All heavy compute runs on the player's machine — that is what offline means — and the sim is where it
+concentrates: gravity O–D tables, best-path search across lines with transfers, per-tick vehicle
+kinematics, all recomputed on a ~250 ms debounce. TypeScript in a worker is the right call today, and
+we are not porting anything on speculation. But write the sim so that a port is mechanical rather
+than a rewrite:
+
+- **Pure functions.** State goes in as arguments, results come out as return values. No hidden
+  mutation, no reaching into module scope.
+- **Flat typed arrays** (`Float64Array`, `Int32Array`) for anything indexed per-commuter, per-edge, or
+  per-stop. Never an array of objects in a hot loop.
+- **No class instances or object graphs in the hot path.** Indices into parallel arrays, not
+  references between objects.
+- **No allocation inside a tick.** Allocate buffers once, reuse them.
+- **Keep the worker boundary narrow** — pass buffers, not deep structures, and prefer transferables.
+
+This is better TypeScript on its own terms: it is what makes a worker cheap to feed and a profiler
+readable. It also means that if profiling ever says the sim is the bottleneck, the hot kernel can be
+swapped for Rust/WASM without touching the game around it. **Profile before proposing that port** —
+we have no measurement yet, and rewriting on a guess is how weeks disappear.
+
 ## Conventions
 
 - **Tunables live in `src/game/constants.ts`.** The manual quotes it directly. Never inline a

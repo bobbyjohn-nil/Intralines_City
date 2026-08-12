@@ -1,0 +1,24 @@
+:root {
+  --paper: #f6f1e1;
+  --panel: #fffdf6;
+  --ink: #2c2a24;
+  --muted: #7a7259;
+  --blue: #1d3f7a;
+  --amber: #ffe9a8;
+  --red: #c94f35;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #23211b;
+    --panel: #2c2a24;
+    --ink: #ece5d2;
+    --blue: #8fb0e8;
+    --red: #e08668;
+  }
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+}

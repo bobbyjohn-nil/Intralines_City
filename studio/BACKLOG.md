@@ -17,13 +17,7 @@ the game runnable.
 
 Goal: a bus drives a line you drew, on a fake city, and it costs money. No real data, no depth.
 
-- [ ] Project skeleton — Vite + TypeScript + React, `dev`/`build`/`test` scripts, empty `constants.ts`
-- [ ] Riverton: procedural demo city — street graph with road classes and speeds, water, parks
-- [ ] Map render of the procedural city in the paper palette, with the grey out-of-bounds mask
-- [ ] Game clock — pause/play, three speeds (0.25 / 2 / 10 game-min per real second), `Space` and `1`/`2`/`3`
-- [ ] Draw a line — click stops, snap to road, shortest-path between them, draft bar, `Esc` cancels
 - [ ] Bus motion — accelerate 1.1 m/s², brake 1.3, 20 s dwell, schedule as a pure function of the clock
-- [ ] Money floor — treasury, per-tick ledger, stop cost $4k, one bus model, driver wages $26/h
 
 ### Milestone 2 — it's a game
 
@@ -69,7 +63,10 @@ Goal: riders decide whether to ride, and the decision is legible.
 
 ## In progress
 
-<!-- The orchestrator moves items here when it starts them, and annotates with the crew and start time. -->
+- [~] Project skeleton — Vite + TypeScript + React, `dev`/`build`/`test` scripts — gameplay-coder — started 2026-08-12
+- [~] Riverton: procedural demo city — street graph, road classes, water, parks — gameplay-coder — started 2026-08-12
+- [~] Map render in the paper palette, with the grey out-of-bounds mask — vfx-artist — started 2026-08-12
+- [~] Game clock — pause/play, three speeds, `Space` and `1`/`2`/`3` — gameplay-coder — started 2026-08-12
 
 ## Blocked
 
