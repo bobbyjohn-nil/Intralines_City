@@ -23,7 +23,7 @@
  */
 
 import type { City, LngLat } from '../game/types';
-import type { Draft, Line, RouteLeg, Stop } from '../game/lines/types';
+import type { Draft, Line, RouteLeg, Stop, StopId } from '../game/lines/types';
 import type { RouteSchedule } from '../game/buses/schedule';
 import { busPositionAt, createBusPositionScratch, type BusPosition } from '../game/buses/position';
 import { getRenderCache, type RenderCache } from './drawCity';
@@ -202,6 +202,12 @@ const scratchB: ScreenPoint = { x: 0, y: 0 };
 const busPositionScratch: BusPosition = createBusPositionScratch();
 const busMarkerScratch: BusMarkerPoints = createBusMarkerPointsScratch();
 
+/** Fallback when `lines` is supplied without `stops` — never allocated per call, same idiom as
+ * `pathfind.ts`'s `EMPTY_EDGE_IDS`. A caller that draws lines is expected to also supply the
+ * collection those lines' `stopIds` resolve against; this just means a missing one draws routes
+ * with no stop markers instead of throwing mid-frame. */
+const EMPTY_STOPS_MAP: ReadonlyMap<StopId, Stop> = new Map();
+
 // ── Public option shapes ─────────────────────────────────────────────────────
 
 /**
@@ -217,6 +223,10 @@ export interface LineBusSchedule {
 
 export interface DrawOverlaysOptions {
   readonly lines?: readonly Line[];
+  /** The top-level stop collection `lines[].stopIds` resolves against (save-format.md §5) — a
+   * `Line` no longer nests its own `Stop` objects. Missing while `lines` is present just means no
+   * stop markers for those lines (see `EMPTY_STOPS_MAP`), not a thrown error mid-frame. */
+  readonly stops?: ReadonlyMap<StopId, Stop>;
   readonly schedules?: readonly LineBusSchedule[];
   readonly draft?: Draft;
   readonly hoverLngLat?: LngLat;
@@ -289,6 +299,7 @@ function drawStops(
   viewport: Viewport,
   palette: PaperPalette,
   lines: readonly Line[] | undefined,
+  stopsById: ReadonlyMap<StopId, Stop>,
   draftStops: readonly Stop[] | undefined,
 ): void {
   const radiusPx = stopRadiusPx(viewport.zoom);
@@ -297,7 +308,12 @@ function drawStops(
   let drewAny = false;
   if (lines) {
     for (const line of lines) {
-      for (const stop of line.stops) {
+      for (const stopId of line.stopIds) {
+        const stop = stopsById.get(stopId);
+        // A line whose stopIds outrun the caller's collection is a caller bug (stopsById should
+        // always be a superset of every drawn line's stops), not a player-reachable state — skip
+        // it and keep drawing the rest rather than throwing mid-frame.
+        if (stop === undefined) continue;
         drewAny = addStopToPath(ctx, viewport, stop, radiusPx) || drewAny;
       }
     }
@@ -413,7 +429,7 @@ export function drawOverlays(
   viewport: Viewport,
   options: DrawOverlaysOptions,
 ): void {
-  const { lines, schedules, draft, hoverLngLat, totalMinutes } = options;
+  const { lines, stops, schedules, draft, hoverLngLat, totalMinutes } = options;
   const hasLines = lines !== undefined && lines.length > 0;
   const hasDraft = draft !== undefined && draft.stops.length > 0;
   const hasSchedules = schedules !== undefined && schedules.length > 0 && totalMinutes !== undefined;
@@ -439,7 +455,7 @@ export function drawOverlays(
   }
 
   if (hasLines || hasDraft) {
-    drawStops(ctx, viewport, palette, lines, hasDraft ? draft.stops : undefined);
+    drawStops(ctx, viewport, palette, lines, stops ?? EMPTY_STOPS_MAP, hasDraft ? draft.stops : undefined);
   }
 
   if (hasSchedules) {

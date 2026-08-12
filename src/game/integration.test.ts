@@ -21,7 +21,7 @@ import {
   undoLastStop,
   type DraftState,
 } from './lines/draft';
-import type { Line } from './lines/types';
+import type { Line, LineId, Stop, StopId } from './lines/types';
 import { createPathfindContext, findPath } from './lines/pathfind';
 import { buildRouteSchedule } from './buses/schedule';
 import { busPositionAt, createBusPositionScratch } from './buses/position';
@@ -65,8 +65,10 @@ function testStopEdgeIndices(graph: StreetGraph): readonly number[] {
 
 /** Draws a line over `city`'s street graph the same way a player would, via the real draft
  * state machine — not a hand-built `Line` literal — so this exercises `snapToRoad` and
- * `findPath` too, not just `buildRouteSchedule`. */
-function buildTestLine(city: City): Line {
+ * `findPath` too, not just `buildRouteSchedule`. Returns the line alongside the top-level stop
+ * collection its `stopIds` resolve against (save-format.md §5) — `App.tsx` builds the same pair,
+ * kept alongside `lines`, this just does it for one line at a time. */
+function buildTestLine(city: City): { readonly line: Line; readonly stopsById: ReadonlyMap<StopId, Stop> } {
   let state = startDraft(city.graph);
   for (const edgeIndex of testStopEdgeIndices(city.graph)) {
     const result = addStop(state, midpointOf(city.graph, edgeIndex));
@@ -76,7 +78,15 @@ function buildTestLine(city: City): Line {
   if (!canCreate(state)) throw new Error('buildTestLine: draft never became a creatable line');
 
   const draft = summarizeDraft(state);
-  return { id: 1, name: 'Test Line', stops: draft.stops, legs: draft.legs, totalLengthM: draft.totalLengthM };
+  const line: Line = {
+    id: 1 as LineId,
+    name: 'Test Line',
+    stopIds: draft.stops.map((stop) => stop.id),
+    legs: draft.legs,
+    totalLengthM: draft.totalLengthM,
+  };
+  const stopsById = new Map(draft.stops.map((stop) => [stop.id, stop] as const));
+  return { line, stopsById };
 }
 
 // ── 1. Determinism across the whole chain ───────────────────────────────────────────────────
@@ -88,12 +98,12 @@ describe('determinism: generate -> draft -> line -> schedule -> position, end to
 
     // The cities themselves are already asserted byte-identical in city/generateRiverton.test.ts —
     // what matters here is that everything built *on top* of them stays identical too.
-    const lineA = buildTestLine(cityA);
-    const lineB = buildTestLine(cityB);
+    const { line: lineA, stopsById: stopsByIdA } = buildTestLine(cityA);
+    const { line: lineB, stopsById: stopsByIdB } = buildTestLine(cityB);
     expect(lineA).toEqual(lineB);
 
-    const scheduleA = buildRouteSchedule(lineA, cityA.graph, CRUISE_SPEED_KMH);
-    const scheduleB = buildRouteSchedule(lineB, cityB.graph, CRUISE_SPEED_KMH);
+    const scheduleA = buildRouteSchedule(lineA, stopsByIdA, cityA.graph, CRUISE_SPEED_KMH);
+    const scheduleB = buildRouteSchedule(lineB, stopsByIdB, cityB.graph, CRUISE_SPEED_KMH);
     expect(scheduleA).toEqual(scheduleB);
 
     // Sample bus positions at a spread of clock values, including a couple of different bus
@@ -254,11 +264,11 @@ describe('money conservation: stop placement spend/undo/cancel', () => {
 
 describe('line/schedule consistency', () => {
   const city = generateRiverton(RIVERTON_SEED);
-  const line = buildTestLine(city);
-  const schedule = buildRouteSchedule(line, city.graph, CRUISE_SPEED_KMH);
+  const { line, stopsById } = buildTestLine(city);
+  const schedule = buildRouteSchedule(line, stopsById, city.graph, CRUISE_SPEED_KMH);
 
   it('a schedule built twice from the same line is identical', () => {
-    const again = buildRouteSchedule(line, city.graph, CRUISE_SPEED_KMH);
+    const again = buildRouteSchedule(line, stopsById, city.graph, CRUISE_SPEED_KMH);
     expect(again).toEqual(schedule);
   });
 
@@ -276,7 +286,7 @@ describe('line/schedule consistency', () => {
     const legCount = schedule.legs.length;
     const naiveRoundTripS = (2 * line.totalLengthM) / CRUISE_SPEED_MS;
 
-    const intermediateStopCount = Math.max(0, line.stops.length - 2);
+    const intermediateStopCount = Math.max(0, line.stopIds.length - 2);
     const waitTotalS = 2 * BUS_LAYOVER_MINUTES * 60 + 2 * intermediateStopCount * BUS_DWELL_SECONDS;
 
     const upperBoundS = naiveRoundTripS + legCount * perLegOverheadS + waitTotalS;
@@ -284,7 +294,7 @@ describe('line/schedule consistency', () => {
   });
 
   it('the schedule has exactly 2*(stops-1) legs, forward then reverse, and legs.length matches the line', () => {
-    expect(schedule.legs.length).toBe(2 * (line.stops.length - 1));
+    expect(schedule.legs.length).toBe(2 * (line.stopIds.length - 1));
     expect(schedule.legs.length).toBe(2 * line.legs.length);
   });
 });
@@ -297,8 +307,8 @@ describe('service-hours agreement: busPositionAt and accrue interpret DEFAULT_SE
   // between them is a real, player-visible bug (a bus rendered as running while its driver is off
   // the clock, or vice versa) that neither module's own unit tests could catch alone.
   const city = generateRiverton(RIVERTON_SEED);
-  const line = buildTestLine(city);
-  const schedule = buildRouteSchedule(line, city.graph, CRUISE_SPEED_KMH);
+  const { line, stopsById } = buildTestLine(city);
+  const schedule = buildRouteSchedule(line, stopsById, city.graph, CRUISE_SPEED_KMH);
 
   const firstServiceMinuteOfDay = DEFAULT_SERVICE_HOURS.firstHour * 60; // 360 (06:00)
   const lastServiceMinuteOfDay = DEFAULT_SERVICE_HOURS.lastHour * 60; // 1320 (22:00)

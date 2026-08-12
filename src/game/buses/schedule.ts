@@ -11,7 +11,7 @@
  */
 
 import type { LngLat, RoadEdge, RoadNode, StreetGraph } from '../types';
-import type { Line, RouteLeg } from '../lines/types';
+import type { Line, LineId, RouteLeg, Stop, StopId } from '../lines/types';
 import { BUS_ACCEL_MS2, BUS_BRAKE_MS2, BUS_DWELL_SECONDS, BUS_LAYOVER_MINUTES } from '../constants';
 import { buildSpeedProfile, type SpeedProfile } from './kinematics';
 import { metersBetween } from './geo';
@@ -24,8 +24,8 @@ export type WaitKind = 'dwelling' | 'layover';
 /** One directed traversal of a leg — either an original `RouteLeg` driven forward, or the same
  * leg driven in reverse on the way back. */
 export interface LegSchedule {
-  readonly fromStopId: number;
-  readonly toStopId: number;
+  readonly fromStopId: StopId;
+  readonly toStopId: StopId;
   readonly lengthM: number;
   readonly profile: SpeedProfile;
   /** Time spent stopped at `fromStopId` before this leg departs — dwell at an intermediate stop,
@@ -50,11 +50,11 @@ export interface LegSchedule {
 }
 
 export interface RouteSchedule {
-  readonly lineId: number;
+  readonly lineId: LineId;
   readonly cruiseSpeedMs: number;
   /** Total time for one full out-and-back round trip, seconds — `legs[legs.length - 1].arriveS`. */
   readonly roundTripDurationS: number;
-  /** `2 * (line.stops.length - 1)` legs: the line's own legs driven forward, then the same legs
+  /** `2 * (line.stopIds.length - 1)` legs: the line's own legs driven forward, then the same legs
    * driven in reverse, in round-trip order. */
   readonly legs: readonly LegSchedule[];
 }
@@ -110,17 +110,36 @@ function cumulativeDistances(polyline: readonly LngLat[]): number[] {
   return cum;
 }
 
+/** Looks up one of `line`'s stops in the caller-owned top-level collection. Throws rather than
+ * returning `undefined` — a `Line.stopIds` entry with no matching `Stop` is an impossible upstream
+ * state (the collection is supposed to be a superset of every line's stops), not something a
+ * schedule can silently route around. */
+function requireStop(stopsById: ReadonlyMap<StopId, Stop>, stopId: StopId, lineId: LineId): Stop {
+  const stop = stopsById.get(stopId);
+  if (stop === undefined) {
+    throw new Error(`buildRouteSchedule: line ${lineId} references stop ${stopId} missing from stopsById`);
+  }
+  return stop;
+}
+
 /**
- * Builds the round-trip schedule for `line` at `cruiseSpeedKmh`. Pure and comparatively
- * expensive (walks the whole route, builds a polyline per leg) — call it once per line (or once
- * per line + bus-model pairing, since cruise speed varies by model) and cache the result; never
- * call it from a per-tick or per-frame path.
+ * Builds the round-trip schedule for `line` at `cruiseSpeedKmh`. `stopsById` is the top-level
+ * stop collection `line.stopIds` resolves against (save-format.md §5 hoisted stops out of
+ * `Line`) — the caller (`App.tsx`) owns it alongside `lines`. Pure and comparatively expensive
+ * (walks the whole route, builds a polyline per leg) — call it once per line (or once per line +
+ * bus-model pairing, since cruise speed varies by model) and cache the result; never call it from
+ * a per-tick or per-frame path.
  */
-export function buildRouteSchedule(line: Line, graph: StreetGraph, cruiseSpeedKmh: number): RouteSchedule {
-  const stopCount = line.stops.length;
+export function buildRouteSchedule(
+  line: Line,
+  stopsById: ReadonlyMap<StopId, Stop>,
+  graph: StreetGraph,
+  cruiseSpeedKmh: number
+): RouteSchedule {
+  const stopCount = line.stopIds.length;
   if (stopCount < 2 || line.legs.length !== stopCount - 1) {
     throw new Error(
-      `buildRouteSchedule: line ${line.id} has ${stopCount} stops and ${line.legs.length} legs — a schedulable line needs >= 2 stops and stops.length - 1 legs`
+      `buildRouteSchedule: line ${line.id} has ${stopCount} stops and ${line.legs.length} legs — a schedulable line needs >= 2 stops and stopIds.length - 1 legs`
     );
   }
 
@@ -128,8 +147,10 @@ export function buildRouteSchedule(line: Line, graph: StreetGraph, cruiseSpeedKm
   const edgeById = new Map(graph.edges.map((e) => [e.id, e] as const));
   const nodeById = new Map(graph.nodes.map((n) => [n.id, n] as const));
 
-  const firstStopId = line.stops[0]!.id;
-  const lastStopId = line.stops[stopCount - 1]!.id;
+  const stops = line.stopIds.map((id) => requireStop(stopsById, id, line.id));
+
+  const firstStopId = stops[0]!.id;
+  const lastStopId = stops[stopCount - 1]!.id;
 
   const legCount = 2 * (stopCount - 1);
   const legs: LegSchedule[] = [];
@@ -141,8 +162,8 @@ export function buildRouteSchedule(line: Line, graph: StreetGraph, cruiseSpeedKm
     // see the schedule.ts module comment for the derivation of this index.
     const originalLegIndex = forward ? i : 2 * stopCount - 3 - i;
     const originalLeg = line.legs[originalLegIndex]!;
-    const originFromStop = line.stops[originalLegIndex]!;
-    const originToStop = line.stops[originalLegIndex + 1]!;
+    const originFromStop = stops[originalLegIndex]!;
+    const originToStop = stops[originalLegIndex + 1]!;
     const fromStop = forward ? originFromStop : originToStop;
     const toStop = forward ? originToStop : originFromStop;
 

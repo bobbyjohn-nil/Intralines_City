@@ -1,18 +1,24 @@
 /**
  * Characterization tests, written ahead of three planned refactors to `Line`/`Stop`
- * (studio/docs/design/save-format.md §5):
+ * (studio/docs/design/save-format.md §5), now landed:
  *
- *   1. Hoist stops out of `Line` — `Line.stops: Stop[]` becomes a top-level `stops[]` with
- *      `line.stopIds: number[]`, so a stop shared by two lines is stored once.
- *   2. Stable ids — stop and line ids stop being array indices and become monotonic,
- *      never-reused ids drawn from a persisted counter (`nextIds`).
- *   3. `roadClass` on `Stop`, plus derived `orphaned`/`movedM`, so a saved stop re-anchors by
- *      position rather than by `edgeId`.
+ *   1. Hoist stops out of `Line` — `Line.stops: Stop[]` became a top-level `stops[]` with
+ *      `line.stopIds: StopId[]`, so a stop shared by two lines is stored once. (The top-level
+ *      collection itself lives in `App.tsx`, alongside `lines`; this file builds its own small
+ *      one per test, the same shape, to stay independent of the app layer.)
+ *   2. Stable ids — stop and line ids stopped being array indices and became monotonic,
+ *      never-reused ids (`StopId`/`LineId`, branded) drawn from a counter threaded across drafts
+ *      (`DraftState.nextStopId`) that will eventually be the persisted `nextIds`.
+ *   3. `roadClass` on `Stop`, plus derived `orphaned`/`movedM`, so a saved stop can eventually
+ *      re-anchor by position rather than by `edgeId` (the re-anchor pass itself is still out of
+ *      scope — only the fields it needs exist so far).
  *
- * These change the shape of `Line` and `Stop` everywhere at once. The type system won't catch a
- * behavioural drift — everything still compiles — so every test here pins an *observable*
- * property (ordering, totals, independence, geometry-only dependence) rather than the current
- * representation, and says in a comment which of the three refactors could plausibly break it.
+ * These changed the shape of `Line` and `Stop` everywhere at once. The type system alone
+ * wouldn't have caught a behavioural drift — everything can still compile with the wrong
+ * numbers — so every test here pins an *observable* property (ordering, totals, independence,
+ * geometry-only dependence) rather than the representation, and says in a comment which of the
+ * three refactors could plausibly break it. One assertion (§4) was expected to flip once ids
+ * went global, and did — see its comment for what's true now and why.
  *
  * One shared city (`generateRiverton(RIVERTON_SEED)`), built once at module scope, keeps this
  * fast — no full-city sweeps, no unseeded randomness.
@@ -23,7 +29,7 @@ import type { LngLat, RoadEdge, StreetGraph } from '../types';
 import { BUS_MODELS, STARTING_BUS_MODEL, STOP_PLACEMENT_COST_USD } from '../constants';
 import { addStop, startDraft, summarizeDraft, undoLastStop, type DraftState } from './draft';
 import { buildRouteSchedule } from '../buses/schedule';
-import type { Draft, Line } from './types';
+import type { Draft, Line, LineId, Stop, StopId } from './types';
 
 const city = generateRiverton(RIVERTON_SEED);
 const CRUISE_SPEED_KMH = BUS_MODELS[STARTING_BUS_MODEL]!.cruiseSpeedKmh;
@@ -58,33 +64,31 @@ function buildSeededDraft(graph: StreetGraph, edgeIndices: readonly number[] = s
   return state;
 }
 
-function toLine(id: number, name: string, draft: Draft): Line {
-  return { id, name, stops: draft.stops, legs: draft.legs, totalLengthM: draft.totalLengthM };
+function toLine(id: LineId, name: string, draft: Draft): Line {
+  return { id, name, stopIds: draft.stops.map((stop) => stop.id), legs: draft.legs, totalLengthM: draft.totalLengthM };
 }
 
 // ── 1. Stop ordering is route order ─────────────────────────────────────────────────────────
 
 describe('stop ordering along a line is the route order', () => {
-  // Protects: refactor 1 (hoisting stops out of Line) and refactor 2 (stable ids). Today
-  // `legs[i]` connects `stops[i]` to `stops[i+1]` by array position; after the hoist, `stops`
-  // becomes a top-level array and a line only carries `stopIds[]`, and after stable ids, `id`
-  // stops being the array index. This asserts the *relationship* — leg i's endpoints are stop i
-  // and stop i+1, identified by id, not by trusting array position — so it still means something
-  // once ids are no longer indices and stops live outside the line.
-  const line = toLine(1, 'Test Line', summarizeDraft(buildSeededDraft(city.graph)));
+  // Protects: refactor 1 (hoisting stops out of Line) and refactor 2 (stable ids). Before the
+  // hoist, `legs[i]` connected `stops[i]` to `stops[i+1]` by array position; now `stops` lives in
+  // a top-level collection and a line only carries `stopIds[]`, and ids are no longer array
+  // indices either. This asserts the *relationship* that survives both changes — leg i's
+  // endpoints are stopIds i and i+1, identified by id, not by trusting array position.
+  const draft = summarizeDraft(buildSeededDraft(city.graph));
+  const line = toLine(1 as LineId, 'Test Line', draft);
 
-  it('has exactly stops.length - 1 legs', () => {
-    expect(line.legs.length).toBe(line.stops.length - 1);
+  it('has exactly stopIds.length - 1 legs', () => {
+    expect(line.legs.length).toBe(line.stopIds.length - 1);
   });
 
-  it('legs[i] connects stops[i] to stops[i+1], by id, for every consecutive pair', () => {
-    expect(line.stops.length).toBeGreaterThanOrEqual(2);
+  it('legs[i] connects stopIds[i] to stopIds[i+1], for every consecutive pair', () => {
+    expect(line.stopIds.length).toBeGreaterThanOrEqual(2);
     for (let i = 0; i < line.legs.length; i++) {
       const leg = line.legs[i]!;
-      const fromStop = line.stops[i]!;
-      const toStop = line.stops[i + 1]!;
-      expect(leg.fromStopId).toBe(fromStop.id);
-      expect(leg.toStopId).toBe(toStop.id);
+      expect(leg.fromStopId).toBe(line.stopIds[i]);
+      expect(leg.toStopId).toBe(line.stopIds[i + 1]);
     }
   });
 });
@@ -147,50 +151,63 @@ describe('undo is exactly inverse to add', () => {
 // ── 4. Two lines sharing a stop location ────────────────────────────────────────────────────
 
 describe('two lines whose stops snap to the same road position', () => {
-  // This is the case refactor 1 exists to fix: today every draft numbers its own stops from 0,
-  // so two *independently drawn* lines that happen to click the same spot end up with colliding
-  // ids and fully duplicated Stop data — nothing here is shared. Pinning that precisely, so the
-  // refactor has a documented "before" to diff against.
+  // This was the case refactor 1+2 exist to fix: before stable ids, every draft numbered its own
+  // stops from 0, so two *independently drawn* lines that happened to click the same spot ended
+  // up with colliding ids despite fully duplicated (never shared) Stop data. `nextStopId` is now
+  // threaded from one draft to the next — draft A "commits" its ending counter to draft B's
+  // start — the same way `App.tsx`'s `handleCreate` advances its own counter only once a draft
+  // actually becomes a line.
   const clickA = midpointOf(city.graph, city.graph.edges[0]!);
   const clickB = midpointOf(city.graph, city.graph.edges[50]!);
 
+  let nextStopId = 0 as StopId;
+
   function draftFromClicks(clicks: readonly LngLat[]): Draft {
-    let state = startDraft(city.graph);
+    let state = startDraft(city.graph, nextStopId);
     for (const click of clicks) {
       const result = addStop(state, click);
       if (!result.ok) throw new Error(`draftFromClicks: ${result.reason}`);
       state = result.state;
     }
+    nextStopId = state.nextStopId;
     return summarizeDraft(state);
   }
 
-  const lineA = toLine(1, 'Line A', draftFromClicks([clickA, clickB]));
-  const lineB = toLine(2, 'Line B', draftFromClicks([clickA, clickB]));
+  const draftA = draftFromClicks([clickA, clickB]);
+  const draftB = draftFromClicks([clickA, clickB]);
+  const lineA = toLine(1 as LineId, 'Line A', draftA);
+  const lineB = toLine(2 as LineId, 'Line B', draftB);
 
-  it('today: the two lines are independent objects with no shared references', () => {
+  it('the two lines are independent objects with no shared references', () => {
     expect(lineA).not.toBe(lineB);
-    expect(lineA.stops).not.toBe(lineB.stops);
-    expect(lineA.stops[0]).not.toBe(lineB.stops[0]);
+    expect(draftA.stops).not.toBe(draftB.stops);
+    expect(draftA.stops[0]).not.toBe(draftB.stops[0]);
   });
 
-  it('today: their first stops land at the identical snapped position and edge (same click)', () => {
-    expect(lineA.stops[0]!.position).toEqual(lineB.stops[0]!.position);
-    expect(lineA.stops[0]!.edgeId).toBe(lineB.stops[0]!.edgeId);
-    expect(lineA.stops[0]!.edgeT).toBe(lineB.stops[0]!.edgeT);
-    // Fully duplicated data, not merely equal-looking: every field matches.
-    expect(lineA.stops[0]).toEqual(lineB.stops[0]);
+  it('their first stops land at the identical snapped position, edge and roadClass (same click) — position alone still does not imply identity', () => {
+    expect(draftA.stops[0]!.position).toEqual(draftB.stops[0]!.position);
+    expect(draftA.stops[0]!.edgeId).toBe(draftB.stops[0]!.edgeId);
+    expect(draftA.stops[0]!.edgeT).toBe(draftB.stops[0]!.edgeT);
+    expect(draftA.stops[0]!.roadClass).toBe(draftB.stops[0]!.roadClass);
+    // Everything except id matches — refactor 1 hoists stops to a shared collection but doesn't
+    // dedup by location, so these are still two distinct records, not one shared stop.
+    const { id: idA, ...restA }: Stop = draftA.stops[0]!;
+    const { id: idB, ...restB }: Stop = draftB.stops[0]!;
+    expect(restA).toEqual(restB);
+    expect(idA).not.toBe(idB);
   });
 
-  it('today: their first stops collide on id, because ids are numbered per-draft (array position), not globally', () => {
-    // EXPECTED TO CHANGE by refactor 2 (stable ids drawn from a persisted `nextIds.stop`
-    // counter): once ids are global and never reused, two independently created lines can never
-    // land on the same stop id again — this assertion should flip to `.not.toBe(...)`, and if
-    // refactor 1 also dedups by location, `lineA.stops[0]` and `lineB.stops[0]` may become the
-    // *same* top-level stop object (`toBe`, not just `toEqual`) referenced by both lines'
-    // `stopIds`. Either change is correct; this assertion exists so it's a deliberate, visible
-    // diff instead of an unnoticed side effect.
-    expect(lineA.stops[0]!.id).toBe(lineB.stops[0]!.id);
-    expect(lineA.stops[0]!.id).toBe(0);
+  it('FLIPPED by refactor 2 (stable ids): their first stops no longer collide on id', () => {
+    // Was: `expect(lineA.stops[0]!.id).toBe(lineB.stops[0]!.id)` and `.toBe(0)` — every draft
+    // numbered its own stops from 0 (a per-draft counter, `id: state.stops.length`), so two
+    // independently created lines' first stops always landed on the same id despite being fully
+    // distinct records (see the `it` above). Now ids are global and monotonic
+    // (`DraftState.nextStopId`, mirroring the persisted `nextIds.stop` from save-format.md §5),
+    // threaded from draft to draft rather than reset — so two lines can never again share a stop
+    // id. Draft A above spent ids 0 and 1 on its two stops, so draft B's first stop starts at 2.
+    expect(lineA.stopIds[0]).not.toBe(lineB.stopIds[0]);
+    expect(lineA.stopIds[0]).toBe(0 as StopId);
+    expect(lineB.stopIds[0]).toBe(2 as StopId);
   });
 });
 
@@ -203,11 +220,12 @@ describe("a line's schedule depends only on its geometry, not its id or position
   // must still see "the same route" regardless of where in the (now-shared) stops array those
   // stops live.
   const draft = summarizeDraft(buildSeededDraft(city.graph));
-  const lineFirst = toLine(1, 'First', draft);
-  const lineLast = toLine(9999, 'Last', draft);
+  const stopsById = new Map(draft.stops.map((stop) => [stop.id, stop] as const));
+  const lineFirst = toLine(1 as LineId, 'First', draft);
+  const lineLast = toLine(9999 as LineId, 'Last', draft);
 
-  const scheduleFirst = buildRouteSchedule(lineFirst, city.graph, CRUISE_SPEED_KMH);
-  const scheduleLast = buildRouteSchedule(lineLast, city.graph, CRUISE_SPEED_KMH);
+  const scheduleFirst = buildRouteSchedule(lineFirst, stopsById, city.graph, CRUISE_SPEED_KMH);
+  const scheduleLast = buildRouteSchedule(lineLast, stopsById, city.graph, CRUISE_SPEED_KMH);
 
   it('round-trip duration is identical regardless of the line id', () => {
     expect(scheduleFirst.roundTripDurationS).toBe(scheduleLast.roundTripDurationS);

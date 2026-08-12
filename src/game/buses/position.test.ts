@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { generateRiverton, RIVERTON_SEED } from '../city/generateRiverton';
 import { addStop, canCreate, startDraft, summarizeDraft } from '../lines/draft';
-import type { Line } from '../lines/types';
+import type { Line, LineId, Stop, StopId } from '../lines/types';
 import type { City, LngLat, StreetGraph } from '../types';
 import { BUS_MODELS, DEFAULT_SERVICE_HOURS, MIN_HEADWAY_MINUTES, STARTING_BUS_MODEL } from '../constants';
 import { buildRouteSchedule } from './schedule';
@@ -26,8 +26,10 @@ function midpointOf(graph: StreetGraph, edgeIndex: number): LngLat {
 
 /** Builds a real, multi-stop line over Riverton's street graph using the draft helpers, the
  * same way a player draws one — spread across the grid so most legs span several edges and
- * `schedule.ts`'s polyline reconstruction gets exercised, not just the single-edge case. */
-function buildTestLine(testCity: City): Line {
+ * `schedule.ts`'s polyline reconstruction gets exercised, not just the single-edge case. Returns
+ * the line alongside the top-level stop collection its `stopIds` resolve against
+ * (save-format.md §5) — `App.tsx` keeps the same pair, alongside `lines`. */
+function buildTestLine(testCity: City): { readonly line: Line; readonly stopsById: ReadonlyMap<StopId, Stop> } {
   const edgeCount = testCity.graph.edges.length;
   const stopEdgeIndices = [0, Math.floor(edgeCount * 0.3), Math.floor(edgeCount * 0.6), edgeCount - 1];
 
@@ -40,11 +42,19 @@ function buildTestLine(testCity: City): Line {
   if (!canCreate(state)) throw new Error('buildTestLine: draft never became a creatable line');
 
   const draft = summarizeDraft(state);
-  return { id: 1, name: 'Test Line', stops: draft.stops, legs: draft.legs, totalLengthM: draft.totalLengthM };
+  const line: Line = {
+    id: 1 as LineId,
+    name: 'Test Line',
+    stopIds: draft.stops.map((stop) => stop.id),
+    legs: draft.legs,
+    totalLengthM: draft.totalLengthM,
+  };
+  const stopsById = new Map(draft.stops.map((stop) => [stop.id, stop] as const));
+  return { line, stopsById };
 }
 
-const line = buildTestLine(city);
-const schedule = buildRouteSchedule(line, city.graph, CRUISE_SPEED_KMH);
+const { line, stopsById } = buildTestLine(city);
+const schedule = buildRouteSchedule(line, stopsById, city.graph, CRUISE_SPEED_KMH);
 
 /** A totalMinutes comfortably inside `DEFAULT_SERVICE_HOURS` for every sample a test takes —
  * `toCalendarTime` folds in `START_MINUTE_OF_DAY` (06:00), so `totalMinutes = 120` lands at
@@ -59,7 +69,7 @@ function headwayMinutesFor(busCount: number): number {
 describe('buildRouteSchedule (via position.ts)', () => {
   it('produces a positive round-trip duration with at least one leg per direction', () => {
     expect(schedule.roundTripDurationS).toBeGreaterThan(0);
-    expect(schedule.legs.length).toBe(2 * (line.stops.length - 1));
+    expect(schedule.legs.length).toBe(2 * (line.stopIds.length - 1));
   });
 });
 
