@@ -21,6 +21,12 @@ Goal: a bus drives a line you drew, on a fake city, and it costs money. No real 
 drawing, bus motion and the money floor all ship and are verified in a browser. Everything below is
 follow-up work found while building it.
 
+**Requested 2026-08-12:**
+
+- [ ] **Route lines overshoot their terminus stops.** The coloured route stroke runs past the first and last stop instead of ending at them. Likely cause: `drawRoutes` renders each leg's `edgeIds` as whole edges, but a stop sits at `edgeT` *along* an edge — the terminal edges need trimming to the stop's position, not drawing end to end. Check the mid-route stops too; if intermediate stops sit mid-edge the same overshoot may exist at every corner and only be visible at the ends
+- [ ] **Make buses look like buses.** They are oriented triangles — enough to be seen, not enough to be a bus. Manual §12 specifies a distinct silhouette per model: the Sparrow a cutaway van with a narrow cab and wide passenger box, the Goliath a bellows joint and third axle, the Skyline two window decks, the Volt-E a roof battery pack and green nose flash. Every bus wears the company colour with a full-length stripe in its line's colour, doors on both flanks, a destination blind, mirrors and lights. The canonical bus drawing in `src/ui/icons/Bus.tsx` is the reference for the hand — the map marker should read as the same vehicle at map scale
+- [ ] **A 3D map.** Manual §6 specifies 3D building extrusions on the online vector-tile renderer, and §16 a full 3D diorama for the station view — tier-appropriate furniture, a crowd matching the live waiting count, and buses pulling in with doors opening. Neither renderer exists; today there is one Canvas 2D basemap. This is the largest single piece of unbuilt presentation in the manual and needs its own design pass before any code — decide what is genuinely 3D versus 2.5D, and what it costs the offline path, which must keep working with no network
+
 **Still open from the playtests (2026-08-12):**
 
 - [ ] `UpdateBanner.css` does not use the new `--ui-z-banner` token. A z-index scale now exists in `tokens.css` (chrome 10, notice 20, banner 30); the banner predates it and still sets its own value
