@@ -9,6 +9,7 @@
 import type { Draft } from '../game/lines/types';
 import { formatUsd } from '../game/economy/format';
 import { CENTS_PER_USD } from '../game/economy/types';
+import { MIN_STOPS_TO_CREATE_LINE } from '../game/constants';
 import './DraftBar.css';
 
 export interface DraftBarProps {
@@ -22,8 +23,10 @@ export interface DraftBarProps {
 }
 
 /** Manual §9's threshold, restated in the house voice rather than gestured at with a greyed
- * button. Mirrors `canCreate()`'s `stops.length >= 2` — update both together if that ever changes. */
-const CREATE_DISABLED_REASON = 'Needs at least 2 stops.';
+ * button. Reads `MIN_STOPS_TO_CREATE_LINE` — the same constant `canCreate()` checks — so the
+ * copy can never drift from the rule. */
+const CREATE_DISABLED_REASON =
+  `This line needs at least ${MIN_STOPS_TO_CREATE_LINE} stops before you can create it — click along a street to add one.`;
 
 const METERS_PER_KM = 1000;
 const MINUTES_PER_HOUR = 60;

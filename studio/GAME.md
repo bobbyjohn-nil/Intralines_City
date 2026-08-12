@@ -206,9 +206,68 @@ Quoted from the manual; **verify against `src/game/constants.ts` before use.**
   reliability 10, environment 5. Grant `(overall − 55) × $1,600` at ≥55; **$8,000 fine** below 35.
 - **Credit score** starts 580, range 300–850.
 
+## Featured cities
+
+Decided 2026-08-12, superseding the manual's Worcester / Des Moines / Madison. All real cities are
+built from the same sources the manual specifies: **OpenStreetMap** streets, water, parks, airports,
+rail stations and industrial land use; **TIGERweb** block-group geometry; **ACS/LODES** population
+and jobs; **FHWA/BTS** AADT traffic counts. Baked into a city pack and cached locally, so a city
+works fully offline after first load.
+
+| City | Population | Why it plays differently |
+|---|---|---|
+| **Riverton** | procedural | Demo. Instant play, no download. |
+| **Boston, MA** | ~650k core, ~4.9M metro | Dense, old, irregular street grid. Water everywhere. The one where geography fights you. |
+| **Los Angeles, CA** | ~3.8M | Vast, low density, car-dominant. The hardest mode-choice problem in the game. |
+| **Orange County, CA** | ~3.2M | Polycentric — no single downtown. Breaks any strategy that assumes trips flow to a centre. |
+| **Houston, TX** | ~2.3M | Sprawling, freeway-shaped, minimal zoning. Enormous distances between origins and destinations. |
+
+### The scale problem — corrected 2026-08-12, read before building the city pipeline
+
+My first reading of this was wrong in an instructive way, and the corrected version is what governs.
+See [city-packs.md](docs/design/city-packs.md) for the arithmetic.
+
+**I assumed pack size was the binding constraint. It is not, and it is not close.** The manual's
+10–40 MB figure is an artifact of JSON serialisation, not an information floor. With coordinate
+quantisation, delta-varint encoding, degree-2 chain collapse, and the manual's own decision that
+buildings are generated procedurally rather than shipped, every featured city lands at **0.4–0.5 MB
+gzipped** — the full LA basin at ~0.82 MB. That clears the 20 MB budget twentyfold even at 3×
+estimation error. **Do not build tiling.** It would be defensive engineering against a problem that
+does not exist.
+
+**The real constraint is zone resolution, and it sets the playable area.** `ZONE_CAP = 512` spread
+over LA County's 12,300 km² gives zones 4.9 km across, against a 650 m walk radius — the unit of
+demand would be seven times wider than the thing that decides whether anyone can reach a stop. Demand
+would be meaningless mush regardless of how small the file is.
+
+So the playable bounding box is budgeted from **zones, not bytes**: a zone square of ≤ 900 m
+(half-diagonal ≈ the walk radius) × 512 zones ≈ **400 km² of developed land per city**. Boston fits
+comfortably at 225 km² and gets the best resolution of the four; the other three clip to ~365–390 km².
+
+**That clip has an identity cost, and it is not evenly distributed.** Houston reduced to the 610 loop
+plays like an ordinary medium-density city, which loses most of why Houston is interesting — one long
+corridor to Hobby preserves a little of it. LA loses LAX, the Valley and Santa Monica; the north edge
+is pushed to catch Burbank so the airport generator still fires, but a 26 km box halves the vastness
+that is LA's whole reason for being on the list. Orange County survives almost intact — its
+polycentricity is the point and that fits in the box.
+
+**The 250 ms debounced recompute** remains untested at these sizes. It is bounded by zone count
+rather than population, so `ZONE_CAP` protects it too — but that is reasoning, not measurement.
+
+[demand-model.md](docs/design/demand-model.md) already carries the main mitigation: demand is
+modelled per **zone**, not per person, with a hard `ZONE_CAP = 512` that merges nearest-neighbour
+block groups above the cap. That keeps the O–D table at ~3 MB regardless of city size — LA does not
+blow up, it gets coarser. Whether 512 zones is enough *resolution* for a city of 3.8M is an open
+question, and the honest answer will come from baking one and looking at it.
+
+**Do not treat this as solved because it is written down.** The first real-city milestone should
+bake **Boston** first — the smallest of the four and the most geographically interesting — measure
+pack size and recompute time honestly, and only then commit to the other three. If the numbers do
+not hold, the fix is a coarser demand grid, not shipping a city that stutters.
+
 ## Scope
 
-- **In:** four cities (Riverton demo, Worcester MA, Des Moines IA, Madison WI); depots (max 5, three
+- **In:** five cities — see Featured cities below; depots (max 5, three
   levels, three add-ons); five bus models with Mk I–III upgrades; five stop tiers; two timetable
   modes; fares and express; two lenders; quarterly report cards.
 - **Explicitly out:** **TBD** — worth writing down.

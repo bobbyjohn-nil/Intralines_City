@@ -146,15 +146,45 @@ export const DRAFT_RUBBER_BAND_DASH_PATTERN: readonly number[] = [5, 4];
 /** Rubber-band stroke width, screen pixels. TUNE */
 export const DRAFT_RUBBER_BAND_WIDTH_PX = 2.5;
 
-/** Bus marker length (nose-to-tail) and width, screen pixels — constant regardless of zoom; a bus
- * marker is a small oriented mark, not a to-scale vehicle footprint. TUNE */
-export const BUS_MARKER_LENGTH_PX = 11;
-export const BUS_MARKER_WIDTH_PX = 6;
+/**
+ * Bus marker true-world size in metres — roughly a standard 40 ft transit bus — rendered at
+ * `viewport.scale()` the same way `routeWidthPx` renders `ROAD_WIDTH_M`, then clamped (see the
+ * `BUS_MARKER_*_MIN_PX` / `_MAX_PX` pairs below) so it never disappears zoomed out and never
+ * blobs zoomed in. TUNE
+ */
+export const BUS_LENGTH_M = 12;
+export const BUS_WIDTH_M = 2.6;
 
-/** Blend factor from `--ink` (0) to `--muted` (1) for the bus body — the "company brand color"
- * per `studio/GAME.md`, kept deliberately distinct from every line color so the full-length
- * stripe (the line's own color, per the same spec line) reads clearly against it. TUNE */
-export const BUS_BODY_COLOR_MIX = 0.15;
+/**
+ * Bus marker length (nose-to-tail) clamps between these two screen-pixel bounds, same
+ * "true-metres scaled, then clamped" idiom as `stopRadiusPx`. The floor is the number that
+ * matters most: at typical play zooms (including the default fit-to-bounds view of a whole city)
+ * `BUS_LENGTH_M * viewport.scale()` is sub-pixel, so the floor is what actually renders — it is
+ * set well above `STOP_RADIUS_MAX_PX * 2` (12px, the largest a stop marker can ever get) so a bus
+ * reads as unmistakably bigger than a stop at *every* zoom, not just the one this was tuned
+ * against. The ceiling keeps it from becoming a blob once zoomed in far enough for the true-scale
+ * size to exceed it. TUNE
+ */
+export const BUS_MARKER_LENGTH_MIN_PX = 18;
+export const BUS_MARKER_LENGTH_MAX_PX = 36;
+
+/** Bus marker width clamps, same idiom as `BUS_MARKER_LENGTH_MIN_PX` / `_MAX_PX` above — held at
+ * the same min:max ratio (5:9) as the length bounds so the marker's proportions (and therefore
+ * its "pointed triangle", not "blob", read) stay constant across the whole zoom range. TUNE */
+export const BUS_MARKER_WIDTH_MIN_PX = 10;
+export const BUS_MARKER_WIDTH_MAX_PX = 20;
+
+/**
+ * Blend factor from `--muted` (0) to `--amber` (1) for the bus "company brand color" (per
+ * `studio/GAME.md`: "Buses wear the company brand color with a full-length stripe in the line's
+ * color"). Deliberately built from a palette-key pair neither `ROAD_COLOR_MIX` nor
+ * `LINE_COLOR_MIX_STOPS` ever uses together — `ROAD_COLOR_MIX` only ever blends `ink`→`muted`,
+ * and every `LINE_COLOR_MIX_STOPS` entry blends among `blue`/`red`/`amber`/`ink` but never
+ * touches `muted` — so a bus body can't land on the same hue axis as a road or a route line by
+ * construction. Fixes the collision where this used to equal `ROAD_COLOR_MIX.primary` (both 0.15
+ * on the ink→muted axis), making a bus body and a primary road numerically the same color. TUNE
+ */
+export const BUS_BODY_COLOR_MIX = 0.5;
 
 /** Width of the full-length line-color stripe drawn down the bus marker's body, screen pixels.
  * TUNE */

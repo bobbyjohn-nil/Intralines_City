@@ -85,7 +85,7 @@ function SpeedControl({
         className={`top-bar__speed-btn${clock.paused ? ' is-active' : ''}`}
         onClick={onTogglePause}
         aria-pressed={clock.paused}
-        aria-label="Pause"
+        aria-label={clock.paused ? 'Resume' : 'Pause'}
       >
         <PauseIcon />
       </button>

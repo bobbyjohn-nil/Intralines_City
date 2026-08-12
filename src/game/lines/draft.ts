@@ -16,6 +16,7 @@ import {
   BUS_DWELL_SECONDS,
   BUS_LAYOVER_MINUTES,
   BUS_MODELS,
+  MIN_STOPS_TO_CREATE_LINE,
   STARTING_BUS_MODEL,
   STOP_MAX_ROAD_SPEED_KMH,
   STOP_PLACEMENT_COST_USD,
@@ -111,7 +112,7 @@ export function addStop(state: DraftState, click: LngLat): AddStopResult {
   if (snap === null) {
     return {
       ok: false,
-      reason: `No street within ${SNAP_MAX_DISTANCE_M} m allows a stop there — stops can't sit on roads faster than ${STOP_MAX_ROAD_SPEED_KMH} km/h.`,
+      reason: `No street within ${SNAP_MAX_DISTANCE_M} m of that click is slow enough for a stop — stops need a road at ${STOP_MAX_ROAD_SPEED_KMH} km/h or under (no motorway stops). Click closer to a slower street.`,
     };
   }
 
@@ -134,7 +135,7 @@ export function addStop(state: DraftState, click: LngLat): AddStopResult {
   if (leg === null) {
     return {
       ok: false,
-      reason: `No route along streets from ${previous.name} to this point — that leg is unroutable.`,
+      reason: `No road connects ${previous.name} to this point — try a different point, or undo this stop.`,
     };
   }
 
@@ -161,7 +162,7 @@ export function cancelDraft(state: DraftState): DraftState {
 }
 
 export function canCreate(state: DraftState): boolean {
-  return state.stops.length >= 2;
+  return state.stops.length >= MIN_STOPS_TO_CREATE_LINE;
 }
 
 /**

@@ -263,3 +263,35 @@ export function spend(treasury: Treasury, amountUsd: number, reason: string): Sp
     transaction: { amountCents, reason },
   };
 }
+
+export interface RefundResult {
+  readonly treasury: Treasury;
+  readonly transaction: Transaction;
+}
+
+/**
+ * `spend`'s inverse — a discrete, player-initiated credit (undoing a stop, cancelling a draft,
+ * ...). Deliberately shares `spend`'s private `usdToCents` rather than doing its own USD→cents
+ * conversion, so a fractional-dollar cost can never round differently on the way out than it did
+ * on the way in (see `ledger.test.ts`'s spend/refund round-trip check).
+ *
+ * Unlike `spend`, this has nothing to decline on funds grounds — `Treasury.cashCents` is already
+ * allowed to go negative (see its doc comment), and a credit never pushes it further from zero in
+ * the direction `spend` guards against. So `refund` skips `spend`'s `ok`/`reason` union entirely
+ * and always succeeds, returning a plain `{ treasury, transaction }` pair instead. A negative
+ * `amountUsd` is still refused the same way `spend` refuses one — that's a caller bug (a refund
+ * for a negative amount is a spend under a different name), not a real "declined" outcome, so it's
+ * logged and treated as a zero-value refund rather than corrupting the treasury.
+ */
+export function refund(treasury: Treasury, amountUsd: number, reason: string): RefundResult {
+  if (amountUsd < 0) {
+    console.error(`refund: amountUsd ${amountUsd} is negative for reason "${reason}" — refusing`);
+    return { treasury, transaction: { amountCents: 0, reason } };
+  }
+
+  const amountCents = usdToCents(amountUsd);
+  return {
+    treasury: { ...treasury, cashCents: treasury.cashCents + amountCents },
+    transaction: { amountCents, reason },
+  };
+}

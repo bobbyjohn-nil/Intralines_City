@@ -1,0 +1,39 @@
+/**
+ * Shared design tokens for src/ui/. One spacing scale (base step 4px / 0.25rem) plus the type
+ * sizes, weights, radius and minimum hit target used by every component in this folder — so the
+ * top bar, dock, draft bar and notice share one rhythm instead of each picking values ad hoc.
+ * Colors stay in src/styles.css; nothing here duplicates a palette value.
+ */
+
+:root {
+  /* Spacing — every padding, margin and gap in src/ui/ is one of these. */
+  --space-1: 0.25rem; /* 4px */
+  --space-2: 0.5rem; /* 8px */
+  --space-3: 0.75rem; /* 12px */
+  --space-4: 1rem; /* 16px */
+  --space-5: 1.5rem; /* 24px */
+  --space-6: 2rem; /* 32px */
+
+  /* The horizontal margin shared by the top bar, dock, draft bar and notice, so their edges line
+     up with each other and with the map's out-of-bounds boundary. */
+  --ui-inset: 5%;
+
+  /* Type — two sizes, two weights, used everywhere in src/ui/. Small + regular for labels and
+     secondary text, base + semibold for values and primary text. Nothing in this folder picks a
+     third size or a third weight. */
+  --ui-text-small: 0.75rem;
+  --ui-text-base: 0.9rem;
+  --ui-weight-regular: 400;
+  --ui-weight-semibold: 600;
+
+  /* One corner radius for every button and panel edge. */
+  --ui-radius: 0.5rem;
+
+  /* Every clickable control in src/ui/ clears this on both axes — padding counts toward it. */
+  --ui-hit-target: 2.5rem; /* 40px */
+
+  /* The top bar's rendered height, derived from its own padding and its tallest child (the speed
+     buttons), so anything anchored below it — the notice — can never drift out of sync with a
+     hand-tuned guess. */
+  --ui-topbar-height: calc(var(--ui-hit-target) + var(--space-3) * 2 + 1px);
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { accrue, addLedgerDay, createTreasury, spend, ZERO_LEDGER_DAY } from './ledger';
+import { accrue, addLedgerDay, createTreasury, refund, spend, ZERO_LEDGER_DAY } from './ledger';
 import type { AccrualContext } from './ledger';
 import { BUS_MODELS, DEFAULT_SERVICE_HOURS, DRIVER_WAGE_PER_HOUR_USD, MINUTES_PER_DAY, OFFICE_OVERHEAD_PER_DAY_USD } from '../constants';
 import { CENTS_PER_USD } from './types';
@@ -161,6 +161,26 @@ describe('spend', () => {
     const result = spend(treasury, 1.01, 'x');
     expect(result.ok).toBe(false);
   });
+});
+
+describe('spend/refund — the shared-predicate property', () => {
+  // `spend` and `refund` share the same private `usdToCents`, so a round trip through both must
+  // land the treasury back on its exact starting cents — including for fractional-dollar amounts,
+  // which is the case a whole-dollar-only cost (like today's STOP_PLACEMENT_COST_USD) never
+  // exercises. This is the invariant a divergent App.tsx-local `refund` could silently violate.
+  it.each([1, 20, 120, 4000.005, 0.01, 1234.567, 0.005])(
+    'spending then refunding $%s returns the treasury to its starting cents',
+    (amountUsd) => {
+      const start = createTreasury(1_000_000); // plenty of headroom for every amount above
+      const spent = spend(start, amountUsd, 'test spend');
+      expect(spent.ok).toBe(true);
+      if (!spent.ok) return;
+
+      const refunded = refund(spent.treasury, amountUsd, 'test refund');
+
+      expect(refunded.treasury.cashCents).toBe(start.cashCents);
+    },
+  );
 });
 
 describe('accrue — cent-level arithmetic does not drift', () => {

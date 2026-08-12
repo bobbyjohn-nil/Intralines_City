@@ -10,11 +10,11 @@
  * and with none supplied it does nothing (no basemap change at all), matching `MapCanvas`'s own
  * "no overlay props = renders exactly as it does today" contract.
  *
- * This module also owns two small pure helpers that have nothing to do with drawing but need to
- * live somewhere testable without a DOM: `pointerMovedPastClickThreshold` (click-vs-drag
- * discrimination for `MapCanvas`'s pointer handling) and `computeBusMarkerPoints` /
- * `stopRadiusPx` (the geometry the draw calls below turn into paths). All three are exported and
- * covered by `drawOverlays.test.ts`.
+ * This module also owns several small pure helpers that have nothing to do with drawing but need
+ * to live somewhere testable without a DOM: `pointerMovedPastClickThreshold` (click-vs-drag
+ * discrimination for `MapCanvas`'s pointer handling) and `computeBusMarkerPoints` / `stopRadiusPx`
+ * / `busMarkerLengthPx` / `busMarkerWidthPx` (the geometry the draw calls below turn into paths).
+ * All are exported and covered by `drawOverlays.test.ts`.
  *
  * Performance contract, same as `drawCity.ts`: no allocation inside a call that can run every
  * frame (buses moving forces exactly that — see `MapCanvas`'s redraw gate). Every reusable point
@@ -31,9 +31,13 @@ import { mixHex, readPaperPalette, type PaperPalette } from './paperPalette';
 import { MAX_ZOOM, MIN_ZOOM, type ScreenPoint, type Viewport } from './projection';
 import {
   BUS_BODY_COLOR_MIX,
-  BUS_MARKER_LENGTH_PX,
-  BUS_MARKER_WIDTH_PX,
+  BUS_LENGTH_M,
+  BUS_MARKER_LENGTH_MAX_PX,
+  BUS_MARKER_LENGTH_MIN_PX,
+  BUS_MARKER_WIDTH_MAX_PX,
+  BUS_MARKER_WIDTH_MIN_PX,
   BUS_STRIPE_WIDTH_PX,
+  BUS_WIDTH_M,
   DRAFT_RUBBER_BAND_DASH_PATTERN,
   DRAFT_RUBBER_BAND_WIDTH_PX,
   LINE_COLOR_MIX_STOPS,
@@ -94,7 +98,7 @@ const busBodyColorCache = new WeakMap<PaperPalette, string>();
 function getBusBodyColor(palette: PaperPalette): string {
   let color = busBodyColorCache.get(palette);
   if (!color) {
-    color = mixHex(palette.ink, palette.muted, BUS_BODY_COLOR_MIX);
+    color = mixHex(palette.muted, palette.amber, BUS_BODY_COLOR_MIX);
     busBodyColorCache.set(palette, color);
   }
   return color;
@@ -106,6 +110,10 @@ function clamp01(value: number): number {
   return value < 0 ? 0 : value > 1 ? 1 : value;
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return value < min ? min : value > max ? max : value;
+}
+
 /** Stop marker radius at `zoom`, clamped between `STOP_RADIUS_MIN_PX` (legible zoomed all the way
  * out) and `STOP_RADIUS_MAX_PX` (never a blob zoomed all the way in), scaled by square root of
  * zoom progress like this game's other size-by-zoom responses. Pure — exported for testing. */
@@ -113,6 +121,23 @@ export function stopRadiusPx(zoom: number): number {
   const span = MAX_ZOOM - MIN_ZOOM;
   const t = span > 0 ? clamp01((zoom - MIN_ZOOM) / span) : 0;
   return STOP_RADIUS_MIN_PX + (STOP_RADIUS_MAX_PX - STOP_RADIUS_MIN_PX) * Math.sqrt(t);
+}
+
+// ── Zoom-responsive bus marker size ──────────────────────────────────────────
+
+/** Bus marker length (nose-to-tail) at `viewport`'s current zoom: `BUS_LENGTH_M` rendered at
+ * `viewport.scale()` the same way `routeWidthPx` renders a road's true-metres width, then clamped
+ * between `BUS_MARKER_LENGTH_MIN_PX` and `BUS_MARKER_LENGTH_MAX_PX` — see those constants' doc
+ * comment in `style.ts` for why the floor is what actually governs legibility at typical play
+ * zooms. Pure — exported for testing. */
+export function busMarkerLengthPx(viewport: Viewport): number {
+  return clamp(BUS_LENGTH_M * viewport.scale(), BUS_MARKER_LENGTH_MIN_PX, BUS_MARKER_LENGTH_MAX_PX);
+}
+
+/** Bus marker width, same idiom as `busMarkerLengthPx` — see its doc comment. Pure — exported for
+ * testing. */
+export function busMarkerWidthPx(viewport: Viewport): number {
+  return clamp(BUS_WIDTH_M * viewport.scale(), BUS_MARKER_WIDTH_MIN_PX, BUS_MARKER_WIDTH_MAX_PX);
 }
 
 // ── Bus marker geometry ──────────────────────────────────────────────────────
@@ -340,6 +365,10 @@ function drawBuses(
   totalMinutes: number,
 ): void {
   const bodyColor = getBusBodyColor(palette);
+  // Computed once per draw call (not per bus) — `viewport` doesn't change mid-call, and this
+  // keeps the per-bus loop below to pure arithmetic on already-clamped numbers.
+  const lengthPx = busMarkerLengthPx(viewport);
+  const widthPx = busMarkerWidthPx(viewport);
 
   for (const entry of schedules) {
     if (entry.busCount <= 0) continue;
@@ -350,14 +379,7 @@ function drawBuses(
       if (!pos) continue; // outside service hours
 
       const center = viewport.project(pos.lngLat[0], pos.lngLat[1], scratchA);
-      const marker = computeBusMarkerPoints(
-        center.x,
-        center.y,
-        pos.bearing,
-        BUS_MARKER_LENGTH_PX,
-        BUS_MARKER_WIDTH_PX,
-        busMarkerScratch,
-      );
+      const marker = computeBusMarkerPoints(center.x, center.y, pos.bearing, lengthPx, widthPx, busMarkerScratch);
 
       ctx.beginPath();
       ctx.moveTo(marker.tipX, marker.tipY);

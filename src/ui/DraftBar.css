@@ -1,27 +1,30 @@
 /**
  * Styling for DraftBar.tsx. Colors are the paper palette custom properties only (see styles.css)
  * — no hardcoded hex. Every stat reserves its own width and the hint line reserves its own height
- * so the bar's box never resizes as the draft grows or Create's disabled state toggles.
+ * so the bar's box never resizes as the draft grows or Create's disabled state toggles. Spacing,
+ * type and radius come from tokens.css — nothing here picks its own value.
  */
+
+@import './tokens.css';
 
 .draft-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem clamp(0.75rem, 2vw, 1.5rem);
-  padding: 0.6rem 5%;
+  gap: var(--space-2) clamp(var(--space-3), 2vw, var(--space-5));
+  padding: var(--space-3) var(--ui-inset);
   background: var(--panel);
   color: var(--ink);
   border-bottom: 1px solid var(--muted);
-  font-size: 0.9rem;
+  font-size: var(--ui-text-base);
   line-height: 1;
 }
 
 .draft-bar__stats {
   display: flex;
   align-items: baseline;
-  gap: clamp(0.85rem, 2vw, 1.5rem);
+  gap: clamp(var(--space-3), 2vw, var(--space-5));
   flex: 1 1 auto;
   min-width: 0;
 }
@@ -29,13 +32,14 @@
 .draft-bar__stat {
   display: flex;
   align-items: baseline;
-  gap: 0.35rem;
+  gap: var(--space-1);
   font-variant-numeric: tabular-nums;
 }
 
 .draft-bar__stat-label {
   color: var(--muted);
-  font-size: 0.75rem;
+  font-size: var(--ui-text-small);
+  font-weight: var(--ui-weight-regular);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
@@ -44,23 +48,28 @@
   display: inline-block;
   min-width: 4.5ch;
   color: var(--ink);
-  font-weight: 600;
+  font-weight: var(--ui-weight-semibold);
 }
 
 .draft-bar__actions {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--space-2);
   flex: 0 0 auto;
 }
 
 .draft-bar__btn {
-  padding: 0.4rem 0.85rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--ui-hit-target);
+  padding: 0 var(--space-4);
   border: 1px solid var(--muted);
-  border-radius: 0.35rem;
+  border-radius: var(--ui-radius);
   background: transparent;
   color: var(--ink);
-  font-size: 0.85rem;
+  font-size: var(--ui-text-base);
+  font-weight: var(--ui-weight-regular);
   cursor: pointer;
   transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
 }
@@ -69,9 +78,13 @@
   background: var(--paper);
 }
 
+.draft-bar__btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
 .draft-bar__btn--primary {
   border-color: var(--ink);
-  font-weight: 600;
+  font-weight: var(--ui-weight-semibold);
 }
 
 .draft-bar__btn:disabled {
@@ -90,7 +103,7 @@
   min-height: 1.2em;
   margin: 0;
   color: var(--red);
-  font-size: 0.8rem;
+  font-size: var(--ui-text-small);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -100,10 +113,6 @@
 }
 
 @media (max-width: 640px) {
-  .draft-bar {
-    font-size: 0.8rem;
-  }
-
   .draft-bar__stat-label {
     display: none;
   }

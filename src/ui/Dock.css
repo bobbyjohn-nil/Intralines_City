@@ -1,14 +1,17 @@
 /**
  * Styling for Dock.tsx. Colors are the paper palette custom properties only (see styles.css) —
  * no hardcoded hex, so the bar flips correctly with the dark theme's `prefers-color-scheme` swap.
+ * Spacing, type and radius come from tokens.css — nothing here picks its own value.
  */
+
+@import './tokens.css';
 
 .dock {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: clamp(0.75rem, 2vw, 1.5rem);
-  padding: 0.5rem 5%;
+  gap: clamp(var(--space-3), 2vw, var(--space-5));
+  padding: var(--space-3) var(--ui-inset);
   background: var(--panel);
   color: var(--ink);
   border-top: 1px solid var(--muted);
@@ -17,7 +20,7 @@
 .dock__group {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--space-2);
 }
 
 .dock__btn {
@@ -25,11 +28,12 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0.2rem;
+  gap: var(--space-1);
   min-width: 3.75rem;
-  padding: 0.4rem 0.75rem;
+  min-height: var(--ui-hit-target);
+  padding: var(--space-2) var(--space-3);
   border: 1px solid transparent;
-  border-radius: 0.4rem;
+  border-radius: var(--ui-radius);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -39,6 +43,10 @@
 .dock__btn:hover {
   color: var(--ink);
   background: var(--paper);
+}
+
+.dock__btn:active {
+  transform: translateY(1px);
 }
 
 .dock__btn.is-active {
@@ -53,7 +61,7 @@
 }
 
 .dock__btn-label {
-  font-size: 0.72rem;
+  font-size: var(--ui-text-small);
   letter-spacing: 0.01em;
   white-space: nowrap;
 }
@@ -67,10 +75,6 @@
 @media (max-width: 640px) {
   .dock__btn {
     min-width: 3rem;
-    padding: 0.35rem 0.5rem;
-  }
-
-  .dock__btn-label {
-    font-size: 0.65rem;
+    padding: var(--space-2);
   }
 }

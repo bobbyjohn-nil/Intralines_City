@@ -54,6 +54,13 @@ export const ROAD_CONGESTION_WEIGHT = {
 /** Stops may not be placed on roads faster than this. SPEC */
 export const STOP_MAX_ROAD_SPEED_KMH = 55;
 
+// ── Lines ────────────────────────────────────────────────────────────────────
+
+/** A drafted line can't be created with fewer stops than this (manual §9: "Create line (needs
+ * ≥ 2 stops)"). Read by both `canCreate()` and the draft bar's disabled-reason copy so the rule
+ * and its prose can never drift apart. SPEC */
+export const MIN_STOPS_TO_CREATE_LINE = 2;
+
 // ── Buses ────────────────────────────────────────────────────────────────────
 
 /** Acceleration, m/s². SPEC */
@@ -78,6 +85,13 @@ export interface BusModelSpec {
   readonly fuelPerKmUsd: number;
   readonly rangeKm: number;
   readonly cruiseSpeedKmh: number;
+  /** Total riders the company must have served, all-time, before this model can be bought.
+   * `0` means available from the start. Manual §12's "Unlocks at" column — data only, no
+   * unlocking logic lives here or reads this field yet. */
+  readonly unlockRidersServed: number;
+  /** Whether buying this model also requires a depot with chargers (manual §12, Volt-E only).
+   * Data only, same as `unlockRidersServed` — nothing enforces this yet. */
+  readonly requiresDepotChargers: boolean;
 }
 
 /** The fleet. All values SPEC. Milestone 1 only uses `metro40`. */
@@ -91,6 +105,8 @@ export const BUS_MODELS: Record<string, BusModelSpec> = {
     fuelPerKmUsd: 0.38,
     rangeKm: 260,
     cruiseSpeedKmh: 26,
+    unlockRidersServed: 0,
+    requiresDepotChargers: false,
   },
   metro40: {
     id: 'metro40',
@@ -101,6 +117,44 @@ export const BUS_MODELS: Record<string, BusModelSpec> = {
     fuelPerKmUsd: 0.62,
     rangeKm: 420,
     cruiseSpeedKmh: 25,
+    unlockRidersServed: 0,
+    requiresDepotChargers: false,
+  },
+  goliath: {
+    id: 'goliath',
+    name: 'Goliath Articulated',
+    capacity: 115,
+    priceUsd: 440_000,
+    costPerKmUsd: 2.2,
+    fuelPerKmUsd: 0.95,
+    rangeKm: 480,
+    cruiseSpeedKmh: 23,
+    unlockRidersServed: 25_000,
+    requiresDepotChargers: false,
+  },
+  skyline: {
+    id: 'skyline',
+    name: 'Skyline Double-Decker',
+    capacity: 130,
+    priceUsd: 520_000,
+    costPerKmUsd: 1.9,
+    fuelPerKmUsd: 0.8,
+    rangeKm: 400,
+    cruiseSpeedKmh: 22,
+    unlockRidersServed: 40_000,
+    requiresDepotChargers: false,
+  },
+  volte: {
+    id: 'volte',
+    name: 'Volt-E Electric',
+    capacity: 75,
+    priceUsd: 380_000,
+    costPerKmUsd: 0.7,
+    fuelPerKmUsd: 0.16,
+    rangeKm: 300,
+    cruiseSpeedKmh: 26,
+    unlockRidersServed: 60_000,
+    requiresDepotChargers: true,
   },
 };
 

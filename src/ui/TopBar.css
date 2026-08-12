@@ -1,18 +1,21 @@
 /**
  * Styling for TopBar.tsx. Colors are the paper palette custom properties only (see styles.css) —
  * no hardcoded hex, so the bar flips correctly with the dark theme's `prefers-color-scheme` swap.
+ * Spacing, type and radius come from tokens.css — nothing here picks its own value.
  */
+
+@import './tokens.css';
 
 .top-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: clamp(0.75rem, 2vw, 1.5rem);
-  padding: 0.6rem 5%;
+  gap: clamp(var(--space-3), 2vw, var(--space-5));
+  padding: var(--space-3) var(--ui-inset);
   background: var(--panel);
   color: var(--ink);
   border-bottom: 1px solid var(--muted);
-  font-size: 0.9rem;
+  font-size: var(--ui-text-base);
   line-height: 1;
   white-space: nowrap;
 }
@@ -25,7 +28,7 @@
 }
 
 .top-bar__brand-name {
-  font-weight: 600;
+  font-weight: var(--ui-weight-semibold);
   letter-spacing: 0.01em;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -34,7 +37,7 @@
 .top-bar__chips {
   display: flex;
   align-items: center;
-  gap: clamp(0.85rem, 2vw, 1.5rem);
+  gap: clamp(var(--space-3), 2vw, var(--space-5));
   flex: 1 1 auto;
   justify-content: flex-end;
   min-width: 0;
@@ -49,18 +52,18 @@
 .top-bar__speed-group {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--space-1);
 }
 
 .top-bar__speed-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 2rem;
-  height: 2rem;
+  width: var(--ui-hit-target);
+  height: var(--ui-hit-target);
   padding: 0;
   border: 1px solid transparent;
-  border-radius: 0.35rem;
+  border-radius: var(--ui-radius);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -70,6 +73,10 @@
 .top-bar__speed-btn:hover {
   color: var(--ink);
   background: var(--paper);
+}
+
+.top-bar__speed-btn:active {
+  transform: translateY(1px);
 }
 
 .top-bar__speed-btn.is-active {
@@ -86,20 +93,21 @@
 .top-bar__chip {
   display: flex;
   align-items: baseline;
-  gap: 0.35rem;
+  gap: var(--space-1);
   font-variant-numeric: tabular-nums;
 }
 
 .top-bar__chip-label {
   color: var(--muted);
-  font-size: 0.75rem;
+  font-size: var(--ui-text-small);
+  font-weight: var(--ui-weight-regular);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
 
 .top-bar__chip-value {
   color: var(--ink);
-  font-weight: 600;
+  font-weight: var(--ui-weight-semibold);
 }
 
 .top-bar__chip--cash .top-bar__chip-value {
@@ -115,10 +123,6 @@
 }
 
 @media (max-width: 640px) {
-  .top-bar {
-    font-size: 0.8rem;
-  }
-
   .top-bar__chip-label {
     display: none;
   }

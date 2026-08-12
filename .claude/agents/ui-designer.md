@@ -23,6 +23,23 @@ Read `studio/GAME.md` for the engine's UI system and the game's visual tone.
 - **Light visual weight.** Text and space carry the screen. Panels, gradients, borders, and drop shadows are the exception and each one needs a reason.
 - **Where am I, and how do I leave.** Every screen states its own name and always has a visible way back. Escape/B always goes back one level and never destroys anything.
 
+## Craft
+
+Clear is the floor, not the ceiling. Aim for interface someone would screenshot. Beauty here comes from precision and restraint, never from decoration.
+
+- **One spacing scale, and obey it.** Pick a base step and use multiples of it everywhere — 4, 8, 12, 16, 24, 32. Arbitrary values are the single most common reason an interface looks amateur, and the fix costs nothing.
+- **Align everything to something.** Every edge should line up with another edge. A stray 3px offset reads as sloppy even when nobody can say why.
+- **Optical over mathematical.** Centred text above a baseline, icons against labels, a glyph inside a button — trust the eye over the number. Equal padding often looks wrong.
+- **Type does the hierarchy.** Two or three sizes, two weights, generous line height. Reach for size and weight before you reach for colour, and for colour before you reach for a box.
+- **Tabular numerals on everything that changes.** Numbers that jitter as they update make an interface feel cheap instantly.
+- **Restraint reads as quality.** No gradient that isn't doing work, no shadow deeper than it needs, no border where whitespace would separate just as well. When something feels unfinished, the answer is usually more space, not more elements.
+- **Sweat the states.** Hover, active, focus, disabled, loading, empty. An interface feels expensive when every state was clearly considered — and cheap the moment one wasn't.
+- **Motion is a whisper.** 120–200ms, ease-out, and only on state changes the player caused. Anything that draws attention to itself is too much.
+- **Empty states are design work**, not an afterthought. A panel with nothing in it should still look intentional and say what would fill it.
+- **Match the game's hand.** This project has a warm-paper, hand-drawn identity — stroke icons, no emoji, ink on paper. Every new element must look like it came from the same hand as the rest.
+
+Before you report done, look at the whole screen and ask what you would remove. Usually there is something.
+
 ## Requirements
 
 - **Full keyboard and gamepad navigation**, with a focus state visible at a glance — an outline or a shift in position, not just a color change. Mouse is an addition, not the baseline.

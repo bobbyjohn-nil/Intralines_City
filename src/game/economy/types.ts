@@ -77,8 +77,8 @@ export interface LedgerDay {
  * are never individually logged as a `Transaction`.
  */
 export interface Transaction {
-  /** Always positive; direction is implied by context (only `spend` produces these today, so it
-   * is always an expense). */
+  /** Always positive; direction is implied by context (`spend`'s reason is always an expense,
+   * `refund`'s always a credit — see `ledger.ts`). */
   readonly amountCents: number;
   /** Free-form label for the Finance log/UI, e.g. "Stop placement". */
   readonly reason: string;

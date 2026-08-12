@@ -1,0 +1,134 @@
+/**
+ * Styling for UpdateBanner.tsx. Positioned fixed, top-right, below the top bar — out of document
+ * flow like Notice.css, so mounting or removing it never shifts the top bar, map, draft bar or
+ * dock. Deliberately not stacked with Notice's centered position: Notice is a transient refusal
+ * (auto-dismisses in 4s) that owns the top-center; this banner is a persistent, unrelated message
+ * that owns the top-right corner instead, so the two can never visually collide if both are up at
+ * once. The bottom of the screen (draft bar, dock) is the player's working area while drawing a
+ * line and is never a candidate for this.
+ *
+ * "Dark" per the manual, but the game is light-mode only (see styles.css / GAME.md) — so "dark"
+ * means inverted contrast against the paper chrome (ink background, paper text), not the game's
+ * separate unapplied dark theme. Palette variables only, no hex literals. Spacing, type, radius
+ * and hit target come from tokens.css.
+ */
+
+@import './tokens.css';
+
+.update-banner-region {
+  position: fixed;
+  top: calc(var(--ui-topbar-height) + var(--space-3));
+  left: var(--ui-inset);
+  right: var(--ui-inset);
+  display: flex;
+  justify-content: flex-end;
+  pointer-events: none;
+  z-index: 21;
+}
+
+.update-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  max-width: 26rem;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--ui-radius);
+  background: var(--ink);
+  color: var(--paper);
+  font-size: var(--ui-text-base);
+  line-height: 1.3;
+  pointer-events: auto;
+  animation: update-banner-in 180ms ease-out;
+}
+
+@keyframes update-banner-in {
+  from {
+    opacity: 0;
+    transform: translateY(calc(var(--space-2) * -1));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.update-banner__text {
+  flex: 1 1 14rem;
+  min-width: 0;
+  margin: 0;
+}
+
+.update-banner__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+}
+
+.update-banner__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--ui-hit-target);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--paper);
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: var(--paper);
+  font-size: var(--ui-text-base);
+  font-weight: var(--ui-weight-regular);
+  cursor: pointer;
+  transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
+}
+
+.update-banner__btn:hover {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.update-banner__btn:active {
+  transform: translateY(1px);
+}
+
+.update-banner__btn--primary {
+  border-color: var(--amber);
+  background: var(--amber);
+  color: var(--ink);
+  font-weight: var(--ui-weight-semibold);
+}
+
+.update-banner__btn--primary:hover {
+  background: var(--paper);
+  border-color: var(--paper);
+  color: var(--ink);
+}
+
+/* Amber, not the shared blue focus ring used elsewhere: the banner's own background is the ink
+   that blue is meant to stand out against on paper, so it disappears here. Amber keeps the same
+   "focus is a shift you can see at a glance" promise on a dark background. */
+.update-banner__btn:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-banner {
+    animation: none;
+  }
+
+  .update-banner__btn {
+    transition: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .update-banner-region {
+    justify-content: center;
+  }
+
+  .update-banner {
+    max-width: none;
+    width: 100%;
+  }
+}

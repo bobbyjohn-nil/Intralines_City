@@ -21,18 +21,24 @@ Goal: a bus drives a line you drew, on a fake city, and it costs money. No real 
 
 **Found while verifying the first playable build (2026-08-12):**
 
+- [ ] Riverton has no road above 55 km/h, so the "stops can't sit on fast roads" refusal is unreachable in the demo city and cannot be tested by playing. Add a trunk or motorway on the edge of the map — it also gives the map a visible hierarchy top end
+- [ ] Riverton's grid is fully connected, so the unroutable-leg refusal is unreachable too. Either accept it as untestable by play and cover it only in unit tests, or give the map a genuine dead-end district
+- [ ] The pause button is a 32×32px target and a first click after page load occasionally did not register. May be a test-harness artifact rather than a real defect — but the target is small either way. Check against the UI craft rules
+
 - [ ] Canvas does not redraw when the palette changes — a theme switch needs a manual page reload. The dirty flag isn't set on a CSS variable change
 - [ ] Parks are nearly invisible on the paper palette — pale yellow on cream. They need to read as parks without shouting
 - [ ] The downtown grid reads as a tight stripe of vertical lines rather than a denser core. Density falloff needs to apply to both axes, and more gradually
 - [ ] Street classes are too subtle to tell apart at the default fit-to-bounds zoom. Widths differentiate on close zoom but not at a glance
-- [ ] Verify the offline path against a production build (`npm run build` + `vite preview`) — the dev server proves nothing about the shipped service-worker story
+- [x] ~~Verify the offline path against a production build~~ — **done 2026-08-12.** Verified for real: headless Chrome, network cut via CDP, page reloaded and the game UI rendered; a cross-origin fetch was checked to confirm the network was genuinely down. Full deploy cycle exercised — new worker installs, waits without swapping the running tab, activates only on explicit message, old precache cleaned. Baseline ~70 KB gzip
 - [ ] Spot-check `Space` pause with a real keyboard. Browser automation sends the space bar with an empty `code`, so it could not be verified end to end; the handler itself is correct under direct event dispatch
 
 ### Milestone 2 — it's a game
 
 Goal: riders decide whether to ride, and the decision is legible.
 
-- [ ] Save envelope — versioned, every field optional with a default, newer-save refusal. Do this **before** the save surface grows
+- [ ] Save envelope — implement to [save-format.md](docs/design/save-format.md). Envelope, the 8-step ordered check, empty migration chain, stable ids, position-anchored stops
+- [ ] **Do before the save envelope:** hoist stops out of `Line`. `Line.stops` nests `Stop` objects, so a stop shared by two lines is duplicated — becomes a top-level `stops[]` with `line.stopIds[]`. Connectability scoring (§18) needs this shape anyway, and every day it waits is more code to change
+- [ ] **Do before the save envelope:** stable ids everywhere. Stops and lines are array indices today, which do not survive removal or reordering. Monotonic never-reused ids from a persisted counter
 - [ ] Demand model — gravity O–D table, 650 m walk, mode-choice logit, captive riders
 - [ ] Timetables — Normal mode (bus counts → headway), service hours, 2-min headway floor
 - [ ] Fares — $1.00–$5.00, $2.25 neutral, $0.18/perceived-minute conversion, $1.60 subsidy

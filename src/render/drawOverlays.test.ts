@@ -1,13 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import type { PaperPalette } from './paperPalette';
 import {
+  busMarkerLengthPx,
+  busMarkerWidthPx,
   computeBusMarkerPoints,
   createBusMarkerPointsScratch,
   getLineColor,
   pointerMovedPastClickThreshold,
   stopRadiusPx,
 } from './drawOverlays';
-import { MAX_ZOOM, MIN_ZOOM } from './projection';
+import { MAX_ZOOM, MIN_ZOOM, Viewport } from './projection';
+import {
+  BUS_MARKER_LENGTH_MAX_PX,
+  BUS_MARKER_LENGTH_MIN_PX,
+  BUS_MARKER_WIDTH_MAX_PX,
+  BUS_MARKER_WIDTH_MIN_PX,
+  STOP_RADIUS_MAX_PX,
+} from './style';
+
+/** A viewport at `zoom`; `Viewport.scale()` (what `busMarkerLengthPx`/`busMarkerWidthPx` and
+ * `stopRadiusPx` ultimately key off) depends only on `zoom`, so center/width/height are
+ * arbitrary placeholders here. */
+function viewportAtZoom(zoom: number): Viewport {
+  return new Viewport(0, 0, zoom, 800, 600);
+}
 
 // Same fallback palette `paperPalette.ts` uses when CSS custom properties aren't available —
 // lets these tests call palette-consuming helpers directly, no DOM required.
@@ -85,6 +101,66 @@ describe('stopRadiusPx', () => {
   it('clamps below MIN_ZOOM and above MAX_ZOOM instead of extrapolating', () => {
     expect(stopRadiusPx(MIN_ZOOM - 10)).toBeCloseTo(3, 6);
     expect(stopRadiusPx(MAX_ZOOM + 10)).toBeCloseTo(6, 6);
+  });
+});
+
+describe('busMarkerLengthPx / busMarkerWidthPx', () => {
+  it('is the minimum size at MIN_ZOOM', () => {
+    expect(busMarkerLengthPx(viewportAtZoom(MIN_ZOOM))).toBeCloseTo(BUS_MARKER_LENGTH_MIN_PX, 6);
+    expect(busMarkerWidthPx(viewportAtZoom(MIN_ZOOM))).toBeCloseTo(BUS_MARKER_WIDTH_MIN_PX, 6);
+  });
+
+  it('is the maximum size at MAX_ZOOM', () => {
+    expect(busMarkerLengthPx(viewportAtZoom(MAX_ZOOM))).toBeCloseTo(BUS_MARKER_LENGTH_MAX_PX, 6);
+    expect(busMarkerWidthPx(viewportAtZoom(MAX_ZOOM))).toBeCloseTo(BUS_MARKER_WIDTH_MAX_PX, 6);
+  });
+
+  it('is monotonically non-decreasing across the zoom range', () => {
+    let prevLength = busMarkerLengthPx(viewportAtZoom(MIN_ZOOM));
+    let prevWidth = busMarkerWidthPx(viewportAtZoom(MIN_ZOOM));
+    for (let zoom = MIN_ZOOM; zoom <= MAX_ZOOM; zoom += 0.5) {
+      const length = busMarkerLengthPx(viewportAtZoom(zoom));
+      const width = busMarkerWidthPx(viewportAtZoom(zoom));
+      expect(length).toBeGreaterThanOrEqual(prevLength - 1e-9);
+      expect(width).toBeGreaterThanOrEqual(prevWidth - 1e-9);
+      prevLength = length;
+      prevWidth = width;
+    }
+  });
+
+  it('clamps below MIN_ZOOM and above MAX_ZOOM instead of extrapolating', () => {
+    expect(busMarkerLengthPx(viewportAtZoom(MIN_ZOOM - 10))).toBeCloseTo(BUS_MARKER_LENGTH_MIN_PX, 6);
+    expect(busMarkerLengthPx(viewportAtZoom(MAX_ZOOM + 10))).toBeCloseTo(BUS_MARKER_LENGTH_MAX_PX, 6);
+    expect(busMarkerWidthPx(viewportAtZoom(MIN_ZOOM - 10))).toBeCloseTo(BUS_MARKER_WIDTH_MIN_PX, 6);
+    expect(busMarkerWidthPx(viewportAtZoom(MAX_ZOOM + 10))).toBeCloseTo(BUS_MARKER_WIDTH_MAX_PX, 6);
+  });
+
+  // Regression coverage for the confirmed defect: `BUS_MARKER_LENGTH_PX`/`_WIDTH_PX` used to be
+  // fixed CSS pixels with no zoom response at all, making a bus a "sub-1% speck" at the default
+  // fit-to-bounds zoom where a player actually looks. Compared here as each marker's largest
+  // on-screen extent: the bus triangle's length (its longest dimension — by construction always
+  // >= its width, since `BUS_MARKER_LENGTH_MIN_PX`/`_MAX_PX` exceed `BUS_MARKER_WIDTH_MIN_PX`/
+  // `_MAX_PX` at the same min:max ratio) against the stop circle's diameter (its only dimension).
+  it('a bus marker is strictly larger than a stop marker at the same zoom, across several zooms', () => {
+    const zooms = [MIN_ZOOM, MIN_ZOOM + 2, 10, 14, 18, MAX_ZOOM - 2, MAX_ZOOM];
+    for (const zoom of zooms) {
+      const busLength = busMarkerLengthPx(viewportAtZoom(zoom));
+      const stopDiameter = stopRadiusPx(zoom) * 2;
+      expect(busLength).toBeGreaterThan(stopDiameter);
+    }
+  });
+
+  it('a bus marker is strictly larger than a stop marker at the default fit-to-bounds zoom for a ' +
+    'representative city-sized viewport — the exact scenario the playtest flagged', () => {
+    const viewport = Viewport.fitToBounds({ west: -71.2, east: -71.0, south: 42.3, north: 42.4 }, 1000, 700);
+    const busLength = busMarkerLengthPx(viewport);
+    const stopDiameter = stopRadiusPx(viewport.zoom) * 2;
+    expect(busLength).toBeGreaterThan(stopDiameter);
+  });
+
+  it('the bus marker length floor alone (independent of any particular zoom) already exceeds the ' +
+    'largest a stop marker can ever get, guaranteeing the ordering holds at every zoom', () => {
+    expect(BUS_MARKER_LENGTH_MIN_PX).toBeGreaterThan(STOP_RADIUS_MAX_PX * 2);
   });
 });
 

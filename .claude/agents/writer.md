@@ -1,7 +1,7 @@
 ---
 name: writer
 description: Writes every word the player reads in-game — UI labels, hints, warnings, error messages, tooltips, flavour text, and the How-to-play copy. Use when adding a screen or control, when a message is confusing, or when a system needs explaining in place.
-tools: Read, Write, Edit, Grep, Glob
+tools: Read, Write, Edit, Grep, Glob, Bash
 model: sonnet
 ---
 

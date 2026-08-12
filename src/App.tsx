@@ -3,7 +3,7 @@ import { generateRiverton, RIVERTON_SEED } from './game/city/generateRiverton';
 import { useGameClock } from './game/clock/useGameClock';
 import { useClockKeys } from './game/clock/useClockKeys';
 import { toCalendarTime } from './game/clock/calendar';
-import { accrue, createTreasury, spend } from './game/economy/ledger';
+import { accrue, createTreasury, refund, spend } from './game/economy/ledger';
 import { CENTS_PER_USD, type Treasury } from './game/economy/types';
 import { addStop, canCreate, startDraft, summarizeDraft, undoLastStop } from './game/lines/draft';
 import type { DraftState } from './game/lines/draft';
@@ -16,6 +16,8 @@ import { TopBar } from './ui/TopBar';
 import { Dock, type Tool } from './ui/Dock';
 import { DraftBar } from './ui/DraftBar';
 import { Notice } from './ui/Notice';
+import { UpdateBanner } from './ui/UpdateBanner';
+import { useServiceWorkerUpdate } from './pwa/useServiceWorkerUpdate';
 import { BUS_MODELS, STARTING_BUS_MODEL, STOP_PLACEMENT_COST_USD } from './game/constants';
 import './App.css';
 
@@ -51,6 +53,16 @@ export function App() {
   const [lines, setLines] = useState<readonly Line[]>([]);
   const [hoverLngLat, setHoverLngLat] = useState<LngLat | undefined>(undefined);
   const [notice, setNotice] = useState<string | null>(null);
+
+  // ── Updates ────────────────────────────────────────────────────────────────
+  // In-play path only (manual §2): a player-initiated Reload, never capped, never automatic. The
+  // menu's own path — "on the menu it updates itself automatically" — would call
+  // `applyUpdate({ auto: true })` from wherever the menu mounts, but there is no home menu yet
+  // (see App.tsx's return below for where that path attaches once one exists).
+  const { updateAvailable, applyUpdate } = useServiceWorkerUpdate();
+  const handleReloadForUpdate = useCallback(() => {
+    void applyUpdate();
+  }, [applyUpdate]);
 
   // ── Money ──────────────────────────────────────────────────────────────────
   // A ref, not state: it must track the exact clock position each accrual consumed, so a stale
@@ -124,13 +136,13 @@ export function App() {
   const handleUndo = useCallback(() => {
     if (draft === null || draft.stops.length === 0) return;
     // Refund what the removed stop cost. Tracked against what was invested, per manual §9.
-    setTreasury((current) => current && refund(current, STOP_PLACEMENT_COST_USD));
+    setTreasury((current) => current && refund(current, STOP_PLACEMENT_COST_USD, 'stop undo').treasury);
     setDraft(undoLastStop(draft));
   }, [draft]);
 
   const handleCancel = useCallback(() => {
     if (draft !== null) {
-      setTreasury((current) => refund(current, STOP_PLACEMENT_COST_USD * draft.stops.length));
+      setTreasury((current) => refund(current, STOP_PLACEMENT_COST_USD * draft.stops.length, 'draft cancelled').treasury);
     }
     setDraft(null);
     setTool('select');
@@ -202,14 +214,17 @@ export function App() {
         />
       )}
       <Notice message={notice} onDismiss={() => setNotice(null)} />
+      {/* In-play update banner (manual §2). The whole app is "in play" until a home menu exists —
+          once one does, its mount point should call applyUpdate({ auto: true }) itself instead of
+          rendering this banner, per the comment above. */}
+      <UpdateBanner
+        updateAvailable={updateAvailable}
+        onReload={handleReloadForUpdate}
+        onDismiss={() => {}}
+      />
       <Dock tool={tool} onSelectTool={beginDraft} />
     </div>
   );
-}
-
-/** Returning money to the treasury. `spend` guards overdraft; a refund has nothing to refuse. */
-function refund(treasury: Treasury, amountUsd: number): Treasury {
-  return { ...treasury, cashCents: treasury.cashCents + Math.round(amountUsd * CENTS_PER_USD) };
 }
 
 export default App;
