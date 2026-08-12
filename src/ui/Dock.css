@@ -1,0 +1,76 @@
+/**
+ * Styling for Dock.tsx. Colors are the paper palette custom properties only (see styles.css) —
+ * no hardcoded hex, so the bar flips correctly with the dark theme's `prefers-color-scheme` swap.
+ */
+
+.dock {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(0.75rem, 2vw, 1.5rem);
+  padding: 0.5rem 5%;
+  background: var(--panel);
+  color: var(--ink);
+  border-top: 1px solid var(--muted);
+}
+
+.dock__group {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.dock__btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  min-width: 3.75rem;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid transparent;
+  border-radius: 0.4rem;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
+}
+
+.dock__btn:hover {
+  color: var(--ink);
+  background: var(--paper);
+}
+
+.dock__btn.is-active {
+  color: var(--ink);
+  background: var(--amber);
+  border-color: var(--ink);
+}
+
+.dock__btn:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.dock__btn-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dock__btn {
+    transition: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .dock__btn {
+    min-width: 3rem;
+    padding: 0.35rem 0.5rem;
+  }
+
+  .dock__btn-label {
+    font-size: 0.65rem;
+  }
+}

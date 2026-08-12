@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light;
   --paper: #f6f1e1;
   --panel: #fffdf6;
   --ink: #2c2a24;
@@ -8,14 +9,26 @@
   --red: #c94f35;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --paper: #23211b;
-    --panel: #2c2a24;
-    --ink: #ece5d2;
-    --blue: #8fb0e8;
-    --red: #e08668;
-  }
+/* The game is light-mode only by design. The map carries its own time-of-day tinting, and a dark
+   UI theme fights it — a night-tinted map inside dark chrome loses the day/night read entirely.
+   The dark palette is kept here, unapplied, so it can be revived behind a setting later. */
+:root[data-theme='dark'] {
+  --paper: #23211b;
+  --panel: #2c2a24;
+  --ink: #ece5d2;
+  --blue: #8fb0e8;
+  --red: #e08668;
+}
+
+/* The browser's default 8px body margin made the page 16px taller than the viewport, so the whole
+   app could be scrolled out of place by a wheel event over the top bar. The game owns the full
+   viewport and must never scroll. */
+html,
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 body {

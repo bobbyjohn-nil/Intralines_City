@@ -19,6 +19,15 @@ Goal: a bus drives a line you drew, on a fake city, and it costs money. No real 
 
 - [ ] Bus motion — accelerate 1.1 m/s², brake 1.3, 20 s dwell, schedule as a pure function of the clock
 
+**Found while verifying the first playable build (2026-08-12):**
+
+- [ ] Canvas does not redraw when the palette changes — a theme switch needs a manual page reload. The dirty flag isn't set on a CSS variable change
+- [ ] Parks are nearly invisible on the paper palette — pale yellow on cream. They need to read as parks without shouting
+- [ ] The downtown grid reads as a tight stripe of vertical lines rather than a denser core. Density falloff needs to apply to both axes, and more gradually
+- [ ] Street classes are too subtle to tell apart at the default fit-to-bounds zoom. Widths differentiate on close zoom but not at a glance
+- [ ] Verify the offline path against a production build (`npm run build` + `vite preview`) — the dev server proves nothing about the shipped service-worker story
+- [ ] Spot-check `Space` pause with a real keyboard. Browser automation sends the space bar with an empty `code`, so it could not be verified end to end; the handler itself is correct under direct event dispatch
+
 ### Milestone 2 — it's a game
 
 Goal: riders decide whether to ride, and the decision is legible.
@@ -40,6 +49,7 @@ Goal: riders decide whether to ride, and the decision is legible.
 - [ ] Offline self-rendered basemap from the pack
 - [ ] Congestion model — hourly curve, road-class multipliers, ridership feedback
 - [ ] Demand layers — residents, destinations, travel modes, traffic forecast
+- [ ] Port the day/night tint to the MapLibre vector-tile renderer when it exists — the offline Canvas renderer has it, and the two must not diverge
 
 ### Milestone 4 — depth
 

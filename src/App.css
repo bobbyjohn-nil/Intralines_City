@@ -1,0 +1,26 @@
+/* App shell only. Component styling lives with its component. Palette variables come from
+   styles.css — never a hex literal here. */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* The map takes every pixel the top bar does not. min-height:0 is load-bearing — without it the
+   canvas refuses to shrink inside the flex column and overflows the viewport. */
+.app-map {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.app-map canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}

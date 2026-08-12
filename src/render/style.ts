@@ -90,3 +90,72 @@ export const MASK_DASH_WIDTH_PX = 1.5;
 
 /** Extra screen-pixel margin kept around the viewport before geometry is culled. TUNE */
 export const CULL_MARGIN_PX = 64;
+
+// ── Gameplay overlays (drawCity.ts + drawOverlays.ts) ────────────────────────
+// Drawn after the basemap and time-of-day tint, before the out-of-bounds mask — see
+// `drawOverlays.ts`'s module comment for the full draw-order contract.
+
+/** The palette color fields a line color may be mixed from. Kept separate from `PaperPalette`'s
+ * own key list so this file doesn't need to import the interface just to name its keys. */
+export type PaletteColorKey = 'paper' | 'panel' | 'ink' | 'muted' | 'blue' | 'amber' | 'red';
+
+/**
+ * Confirmed lines (and the active draft, previewed in the color it will take once created) cycle
+ * through this list keyed by `line.id % LINE_COLOR_MIX_STOPS.length` — every entry is a
+ * `mixHex(fromKey, toKey, t)` blend of two palette tones, never an invented hex, chosen so
+ * consecutive entries stay visually distinct from each other and from the road/water/park fills
+ * they're drawn over. TUNE
+ */
+export const LINE_COLOR_MIX_STOPS: ReadonlyArray<readonly [PaletteColorKey, PaletteColorKey, number]> = [
+  ['blue', 'blue', 0],
+  ['red', 'red', 0],
+  ['amber', 'ink', 0.4],
+  ['blue', 'red', 0.5],
+  ['blue', 'amber', 0.5],
+  ['red', 'amber', 0.4],
+  ['blue', 'ink', 0.35],
+  ['red', 'ink', 0.3],
+];
+
+/**
+ * A drawn route is always this multiple of the rendered motorway width (`ROAD_WIDTH_M.motorway` /
+ * `ROAD_MIN_WIDTH_PX.motorway`, the heaviest street class), so a line reads as "infrastructure on
+ * top of the map" — SPEC (task): "clearly heavier than any street" — at every zoom level, not just
+ * the one it happened to be tuned at. TUNE
+ */
+export const ROUTE_WIDTH_MULTIPLIER = 1.7;
+
+/**
+ * Stop marker radius clamps between these two screen-pixel bounds — legible when zoomed all the
+ * way out, never a blob when zoomed all the way in — and is scaled between them by
+ * `sqrt((zoom - MIN_ZOOM) / (MAX_ZOOM - MIN_ZOOM))`, matching this game's other "size by square
+ * root" zoom responses (see `drawOverlays.ts`'s `stopRadiusPx`). TUNE
+ */
+export const STOP_RADIUS_MIN_PX = 3;
+export const STOP_RADIUS_MAX_PX = 6;
+
+/** Stop marker ring stroke width, screen pixels — constant regardless of the marker's own radius
+ * so the ring itself always reads. TUNE */
+export const STOP_OUTLINE_WIDTH_PX = 1.25;
+
+/** Dash pattern for the draft's rubber-band preview segment, CSS-canvas pixels. Deliberately a
+ * different rhythm than the out-of-bounds mask's dash (`MASK_DASH_PATTERN`) so the two dashed
+ * lines never read as the same kind of thing. TUNE */
+export const DRAFT_RUBBER_BAND_DASH_PATTERN: readonly number[] = [5, 4];
+
+/** Rubber-band stroke width, screen pixels. TUNE */
+export const DRAFT_RUBBER_BAND_WIDTH_PX = 2.5;
+
+/** Bus marker length (nose-to-tail) and width, screen pixels — constant regardless of zoom; a bus
+ * marker is a small oriented mark, not a to-scale vehicle footprint. TUNE */
+export const BUS_MARKER_LENGTH_PX = 11;
+export const BUS_MARKER_WIDTH_PX = 6;
+
+/** Blend factor from `--ink` (0) to `--muted` (1) for the bus body — the "company brand color"
+ * per `studio/GAME.md`, kept deliberately distinct from every line color so the full-length
+ * stripe (the line's own color, per the same spec line) reads clearly against it. TUNE */
+export const BUS_BODY_COLOR_MIX = 0.15;
+
+/** Width of the full-length line-color stripe drawn down the bus marker's body, screen pixels.
+ * TUNE */
+export const BUS_STRIPE_WIDTH_PX = 2;

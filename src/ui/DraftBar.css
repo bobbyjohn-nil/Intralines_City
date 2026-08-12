@@ -1,0 +1,110 @@
+/**
+ * Styling for DraftBar.tsx. Colors are the paper palette custom properties only (see styles.css)
+ * — no hardcoded hex. Every stat reserves its own width and the hint line reserves its own height
+ * so the bar's box never resizes as the draft grows or Create's disabled state toggles.
+ */
+
+.draft-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem clamp(0.75rem, 2vw, 1.5rem);
+  padding: 0.6rem 5%;
+  background: var(--panel);
+  color: var(--ink);
+  border-bottom: 1px solid var(--muted);
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.draft-bar__stats {
+  display: flex;
+  align-items: baseline;
+  gap: clamp(0.85rem, 2vw, 1.5rem);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.draft-bar__stat {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.draft-bar__stat-label {
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.draft-bar__stat-value {
+  display: inline-block;
+  min-width: 4.5ch;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.draft-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 0 0 auto;
+}
+
+.draft-bar__btn {
+  padding: 0.4rem 0.85rem;
+  border: 1px solid var(--muted);
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--ink);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
+}
+
+.draft-bar__btn:hover:not(:disabled) {
+  background: var(--paper);
+}
+
+.draft-bar__btn--primary {
+  border-color: var(--ink);
+  font-weight: 600;
+}
+
+.draft-bar__btn:disabled {
+  color: var(--muted);
+  border-color: var(--muted);
+  cursor: not-allowed;
+}
+
+.draft-bar__btn:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.draft-bar__hint {
+  flex-basis: 100%;
+  min-height: 1.2em;
+  margin: 0;
+  color: var(--red);
+  font-size: 0.8rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .draft-bar__btn {
+    transition: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .draft-bar {
+    font-size: 0.8rem;
+  }
+
+  .draft-bar__stat-label {
+    display: none;
+  }
+}

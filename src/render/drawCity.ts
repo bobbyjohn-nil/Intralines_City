@@ -2,14 +2,19 @@
  * The offline/demo basemap renderer — "a fully self-rendered basemap built from the city pack
  * itself: streets by class, water, parks" (manual §6). Canvas 2D, no dependency.
  *
- * Draw order (back to front): water -> parks -> streets by class, lightest to heaviest ->
- * out-of-bounds mask + dashed boundary. No text is drawn here — the manual is explicit that the
- * map shows shapes and panels show numbers.
+ * Draw order (back to front): water -> parks -> streets by class, lightest to heaviest -> the
+ * time-of-day tint. That's what `drawCity` itself draws. Gameplay overlays (routes, stops, the
+ * draft, buses — `drawOverlays.ts`, owned by the renderer, not this module) and the
+ * out-of-bounds mask + dashed boundary (`drawMask`, exported below) both come after this, in that
+ * order — `MapCanvas` is the one place that knows the full sequence and calls all three. No text
+ * is drawn on the map anywhere in that stack — the manual is explicit that the map shows shapes
+ * and panels show numbers.
  *
  * Performance contract: off-screen geometry is culled before it is projected, per-city derived
- * data (node lookup, road buckets, scenery bounding boxes) is built once and cached by object
- * identity, and each road class is drawn as a single path + single `stroke()` call rather than
- * one call per edge.
+ * data (node lookup, edge lookup, road buckets, scenery bounding boxes) is built once and cached
+ * by object identity (`getRenderCache`, exported so `drawOverlays.ts` can resolve the same
+ * `RouteLeg.edgeIds` against the same node/edge lookups without rebuilding them), and each road
+ * class is drawn as a single path + single `stroke()` call rather than one call per edge.
  */
 
 import type { Bounds, City, Polygon, RoadClass, RoadEdge, RoadNode } from '../game/types';
@@ -28,11 +33,17 @@ import {
   ROAD_WIDTH_M,
   WATER_ALPHA,
 } from './style';
+import { getTimeOfDayTint } from './timeOfDay';
 
 // ── Per-city derived data, cached by object identity ────────────────────────
 
-interface RenderCache {
+export interface RenderCache {
   readonly nodeIndex: ReadonlyMap<number, RoadNode>;
+  /** Edge lookup by id — not needed by this module (road buckets are enough for drawing the
+   * basemap itself) but built once here anyway so `drawOverlays.ts` can resolve a
+   * `RouteLeg.edgeIds` chain against the same cache, keyed on the same `City` identity, rather
+   * than building its own duplicate index. */
+  readonly edgeIndex: ReadonlyMap<number, RoadEdge>;
   readonly roadBuckets: ReadonlyMap<RoadClass, readonly RoadEdge[]>;
   readonly waterBounds: readonly Bounds[];
   readonly parkBounds: readonly Bounds[];
@@ -60,21 +71,23 @@ function buildRenderCache(city: City): RenderCache {
     nodeIndex.set(node.id, node);
   }
 
+  const edgeIndex = new Map<number, RoadEdge>();
   const roadBuckets = new Map<RoadClass, RoadEdge[]>();
   for (const roadClass of ROAD_DRAW_ORDER) {
     roadBuckets.set(roadClass, []);
   }
   for (const edge of city.graph.edges) {
+    edgeIndex.set(edge.id, edge);
     roadBuckets.get(edge.roadClass)?.push(edge);
   }
 
   const waterBounds = city.scenery.water.map(computePolygonBounds);
   const parkBounds = city.scenery.parks.map(computePolygonBounds);
 
-  return { nodeIndex, roadBuckets, waterBounds, parkBounds };
+  return { nodeIndex, edgeIndex, roadBuckets, waterBounds, parkBounds };
 }
 
-function getRenderCache(city: City): RenderCache {
+export function getRenderCache(city: City): RenderCache {
   let cache = cityCache.get(city);
   if (!cache) {
     cache = buildRenderCache(city);
@@ -118,7 +131,12 @@ function edgeIsOffscreen(p0: ScreenPoint, p1: ScreenPoint, width: number, height
   return false;
 }
 
-export function drawCity(ctx: CanvasRenderingContext2D, city: City, viewport: Viewport): void {
+export function drawCity(
+  ctx: CanvasRenderingContext2D,
+  city: City,
+  viewport: Viewport,
+  minuteOfDay?: number,
+): void {
   const { width, height } = viewport;
   const palette = readPaperPalette();
   const cache = getRenderCache(city);
@@ -182,8 +200,18 @@ export function drawCity(ctx: CanvasRenderingContext2D, city: City, viewport: Vi
     }
   }
 
-  // ── Out-of-bounds mask + dashed boundary ─────────────────────────────────
-  drawMask(ctx, viewport, city.bounds, palette);
+  // ── Time-of-day tint, composited after the basemap so the whole basemap (not just streets)
+  // shifts with it. Absent minuteOfDay = neutral day, no overlay drawn at all. SPEC (manual §6):
+  // "The map tints with the time of day". Gameplay overlays and the out-of-bounds mask are drawn
+  // after this by the caller — see this module's doc comment — so the masked area stays neutral
+  // grey and the dashed boundary stays legible on top of everything, tint included.
+  if (minuteOfDay !== undefined) {
+    const tint = getTimeOfDayTint(minuteOfDay, palette);
+    if (tint.alpha > 0) {
+      ctx.fillStyle = tint.color;
+      ctx.fillRect(0, 0, width, height);
+    }
+  }
 }
 
 /** Projects and fills a polygon layer (water or parks) as one path, one `fill()` call. */
@@ -217,7 +245,12 @@ function drawPolygonLayer(
   }
 }
 
-function drawMask(
+/**
+ * The grey out-of-bounds mask and dashed playable-area boundary. Exported and called separately
+ * by `MapCanvas` (last, after `drawCity` and `drawOverlays`) rather than from inside `drawCity` —
+ * see this module's doc comment for why the mask has to be the very last thing painted.
+ */
+export function drawMask(
   ctx: CanvasRenderingContext2D,
   viewport: Viewport,
   bounds: Bounds,

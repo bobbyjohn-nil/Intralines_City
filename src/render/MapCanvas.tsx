@@ -1,27 +1,127 @@
 /**
  * Owns the `<canvas>` element for the offline basemap: device-pixel-ratio-correct sizing, window
- * resize, mouse drag to pan, wheel to zoom, and a redraw-on-change rAF loop (never redraws a
- * static map for free).
+ * resize, mouse drag to pan, wheel to zoom, click-to-place / hover-to-preview reporting for the
+ * line-drawing flow, and a redraw-on-change rAF loop (never redraws a static map for free, except
+ * while buses are actually moving — see the draw loop below).
  */
 
 import { useEffect, useRef } from 'react';
-import type { City } from '../game/types';
-import { drawCity } from './drawCity';
-import { Viewport } from './projection';
+import type { City, LngLat } from '../game/types';
+import type { Draft, Line } from '../game/lines/types';
+import { drawCity, drawMask } from './drawCity';
+import { drawOverlays, pointerMovedPastClickThreshold, type LineBusSchedule } from './drawOverlays';
+import { invalidatePaperPaletteCache, readPaperPalette } from './paperPalette';
+import { lngLatToTuple, Viewport, type MutableLngLat } from './projection';
 
 /** Wheel delta -> zoom factor. Negative deltaY (scroll up) zooms in. TUNE */
 const WHEEL_ZOOM_SENSITIVITY = 0.0015;
 
-export interface MapCanvasProps {
-  readonly city: City;
+/** Minute-of-day changes smaller than this are not worth a repaint. TUNE */
+const MINUTE_OF_DAY_QUANTUM = 1;
+
+/**
+ * Pointer movement beyond this many screen pixels, straight-line, between down and up counts as
+ * a drag rather than a click — so panning the map never drops a stop at the end of the gesture.
+ * TUNE
+ */
+const CLICK_DRAG_THRESHOLD_PX = 6;
+
+function quantizeMinuteOfDay(minuteOfDay: number | undefined): number | undefined {
+  if (minuteOfDay === undefined) return undefined;
+  return Math.floor(minuteOfDay / MINUTE_OF_DAY_QUANTUM) * MINUTE_OF_DAY_QUANTUM;
 }
 
-export function MapCanvas({ city }: MapCanvasProps) {
+export interface MapCanvasProps {
+  readonly city: City;
+  /**
+   * Game clock minute-of-day (0–1439), driving the map's time-of-day tint. Absent = neutral day,
+   * no tint — so the map renders correctly before the clock is wired in. Quantised to the minute;
+   * see `quantizeMinuteOfDay`.
+   */
+  readonly minuteOfDay?: number;
+  /** Confirmed lines to draw as routes + stops. Absent = none drawn. */
+  readonly lines?: readonly Line[];
+  /** Bus schedules to animate, one entry per line that has buses running. Absent, or absent
+   * `totalMinutes`, = no buses drawn and no per-frame redraw forced (see the draw loop below). */
+  readonly schedules?: readonly LineBusSchedule[];
+  /** The line currently being drawn, if any — its confirmed legs/stops plus a rubber-band
+   * preview to `hoverLngLat`. */
+  readonly draft?: Draft;
+  /** Where the pointer currently is, in map coordinates — fed back in by the caller (typically
+   * from this component's own `onHover`) so the draft's rubber band can track the cursor. */
+  readonly hoverLngLat?: LngLat;
+  /** Game clock total minutes, driving bus animation. See `schedules`. */
+  readonly totalMinutes?: number;
+  /** Fires on a genuine click — not at the end of a drag/pan. See `CLICK_DRAG_THRESHOLD_PX`. */
+  readonly onMapClick?: (lngLat: LngLat) => void;
+  /** Fires with the pointer's current map position, or `null` when it leaves the canvas.
+   * Throttled to at most once per animation frame. */
+  readonly onHover?: (lngLat: LngLat | null) => void;
+}
+
+export function MapCanvas({
+  city,
+  minuteOfDay,
+  lines,
+  schedules,
+  draft,
+  hoverLngLat,
+  totalMinutes,
+  onMapClick,
+  onHover,
+}: MapCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const viewportRef = useRef<Viewport | null>(null);
   const dirtyRef = useRef(true);
   const cityRef = useRef(city);
   cityRef.current = city;
+  const minuteOfDayRef = useRef(quantizeMinuteOfDay(minuteOfDay));
+
+  // Overlay data is read fresh every draw via refs (not effect dependencies) so the draw loop —
+  // registered once, below — always sees the latest props without resubscribing.
+  const linesRef = useRef(lines);
+  linesRef.current = lines;
+  const schedulesRef = useRef(schedules);
+  schedulesRef.current = schedules;
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const hoverLngLatRef = useRef(hoverLngLat);
+  hoverLngLatRef.current = hoverLngLat;
+  const totalMinutesRef = useRef(totalMinutes);
+  totalMinutesRef.current = totalMinutes;
+
+  // Buses are a pure function of the clock (see `busPositionAt`'s doc comment) — as long as any
+  // line actually has buses and a clock is supplied, they're moving on every frame regardless of
+  // whether anything else changed, so the draw loop below must redraw continuously rather than
+  // wait on `dirtyRef`. `movingRef` is that flag; it's the *only* thing allowed to bypass the
+  // dirty gate — see the draw loop.
+  const hasMovingBuses = totalMinutes !== undefined && !!schedules && schedules.some((s) => s.busCount > 0);
+  const movingRef = useRef(hasMovingBuses);
+  movingRef.current = hasMovingBuses;
+
+  const onMapClickRef = useRef(onMapClick);
+  onMapClickRef.current = onMapClick;
+  const onHoverRef = useRef(onHover);
+  onHoverRef.current = onHover;
+
+  // Redraw when the tint-relevant minute actually changes — quantised so sub-minute clock ticks
+  // (the sim runs faster than real time) don't each trigger a repaint.
+  useEffect(() => {
+    const next = quantizeMinuteOfDay(minuteOfDay);
+    if (next !== minuteOfDayRef.current) {
+      minuteOfDayRef.current = next;
+      dirtyRef.current = true;
+    }
+  }, [minuteOfDay]);
+
+  // Redraw whenever overlay-relevant data actually changes — a new stop, a completed line, the
+  // draft's rubber band following the cursor. Reference equality, same convention as `city`
+  // below: a caller that memoizes its data gets a properly gated static map; one that doesn't
+  // gets some extra redraws, never a stale one. (Continuous bus motion is handled separately by
+  // `movingRef`, not this effect — `totalMinutes` deliberately isn't a dependency here.)
+  useEffect(() => {
+    dirtyRef.current = true;
+  }, [lines, schedules, draft, hoverLngLat]);
 
   // Fit the viewport to the city whenever the city itself changes.
   useEffect(() => {
@@ -64,7 +164,28 @@ export function MapCanvas({ city }: MapCanvasProps) {
     return () => window.removeEventListener('resize', resize);
   }, []);
 
-  // Input: drag to pan, wheel to zoom about the cursor.
+  // Palette-change watcher: a theme flip (the `data-theme` attribute on <html> — see styles.css —
+  // or, if that's ever wired to the OS preference, a `prefers-color-scheme` change) doesn't touch
+  // anything else this component watches. `readPaperPalette` already re-derives correctly from
+  // live CSS on every call; the missing piece was nobody telling the draw loop a redraw was owed,
+  // which used to mean a theme change required a manual page reload.
+  useEffect(() => {
+    const onPaletteChange = () => {
+      invalidatePaperPaletteCache();
+      dirtyRef.current = true;
+    };
+    const observer = new MutationObserver(onPaletteChange);
+    observer.observe(document.documentElement, { attributes: true });
+    const media = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+    media?.addEventListener('change', onPaletteChange);
+    return () => {
+      observer.disconnect();
+      media?.removeEventListener('change', onPaletteChange);
+    };
+  }, []);
+
+  // Input: drag to pan, wheel to zoom about the cursor, click to place (suppressed at the end of
+  // a drag), hover to preview (throttled to one `onHover` call per animation frame).
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -72,27 +193,74 @@ export function MapCanvas({ city }: MapCanvasProps) {
     let dragging = false;
     let lastX = 0;
     let lastY = 0;
+    let downX = 0;
+    let downY = 0;
+
+    // Hover throttling: only the most recent position is kept between animation frames, and at
+    // most one `onHover` call is scheduled at a time.
+    let hoverScheduled = false;
+    let pendingHover: LngLat | null = null;
+    const hoverScratch: MutableLngLat = { lng: 0, lat: 0 };
+
+    const flushHover = () => {
+      hoverScheduled = false;
+      onHoverRef.current?.(pendingHover);
+    };
+    const scheduleHover = (next: LngLat | null) => {
+      pendingHover = next;
+      if (hoverScheduled) return;
+      hoverScheduled = true;
+      requestAnimationFrame(flushHover);
+    };
+    const reportHoverAt = (clientX: number, clientY: number) => {
+      const viewport = viewportRef.current;
+      if (!viewport) return;
+      const rect = canvas.getBoundingClientRect();
+      viewport.unproject(clientX - rect.left, clientY - rect.top, hoverScratch);
+      scheduleHover(lngLatToTuple(hoverScratch));
+    };
 
     const onPointerDown = (event: PointerEvent) => {
       dragging = true;
       lastX = event.clientX;
       lastY = event.clientY;
+      downX = event.clientX;
+      downY = event.clientY;
       canvas.setPointerCapture(event.pointerId);
     };
     const onPointerMove = (event: PointerEvent) => {
-      if (!dragging || !viewportRef.current) return;
-      const dx = event.clientX - lastX;
-      const dy = event.clientY - lastY;
-      lastX = event.clientX;
-      lastY = event.clientY;
-      // Dragging the map right should slide the world right under the cursor, i.e. pan the
-      // viewport center left — panBy takes a screen-space delta of that opposite sign.
-      viewportRef.current.panBy(-dx, -dy);
-      dirtyRef.current = true;
+      if (dragging && viewportRef.current) {
+        const dx = event.clientX - lastX;
+        const dy = event.clientY - lastY;
+        lastX = event.clientX;
+        lastY = event.clientY;
+        // Dragging the map right should slide the world right under the cursor, i.e. pan the
+        // viewport center left — panBy takes a screen-space delta of that opposite sign.
+        viewportRef.current.panBy(-dx, -dy);
+        dirtyRef.current = true;
+      }
+      reportHoverAt(event.clientX, event.clientY);
     };
     const onPointerUp = (event: PointerEvent) => {
       dragging = false;
       canvas.releasePointerCapture(event.pointerId);
+
+      const viewport = viewportRef.current;
+      if (!viewport) return;
+      const draggedPastThreshold = pointerMovedPastClickThreshold(
+        downX,
+        downY,
+        event.clientX,
+        event.clientY,
+        CLICK_DRAG_THRESHOLD_PX,
+      );
+      if (draggedPastThreshold) return; // end of a pan, not a click — never drop a stop here
+      const rect = canvas.getBoundingClientRect();
+      viewport.unproject(event.clientX - rect.left, event.clientY - rect.top, hoverScratch);
+      onMapClickRef.current?.(lngLatToTuple(hoverScratch));
+    };
+    const onPointerLeave = () => {
+      scheduleHover(null);
     };
     const onWheel = (event: WheelEvent) => {
       if (!viewportRef.current) return;
@@ -109,18 +277,21 @@ export function MapCanvas({ city }: MapCanvasProps) {
     canvas.addEventListener('pointermove', onPointerMove);
     canvas.addEventListener('pointerup', onPointerUp);
     canvas.addEventListener('pointercancel', onPointerUp);
+    canvas.addEventListener('pointerleave', onPointerLeave);
     canvas.addEventListener('wheel', onWheel, { passive: false });
     return () => {
       canvas.removeEventListener('pointerdown', onPointerDown);
       canvas.removeEventListener('pointermove', onPointerMove);
       canvas.removeEventListener('pointerup', onPointerUp);
       canvas.removeEventListener('pointercancel', onPointerUp);
+      canvas.removeEventListener('pointerleave', onPointerLeave);
       canvas.removeEventListener('wheel', onWheel);
     };
   }, []);
 
-  // Redraw loop: only draws when `dirtyRef` is set (resize, pan, zoom, or city change), so a
-  // static map does not repaint every frame.
+  // Redraw loop: draws when `dirtyRef` is set (resize, pan, zoom, city/overlay-data change, a
+  // theme flip) OR while `movingRef` is set (buses are actually running against the clock) — a
+  // static map with nothing moving still only repaints on change, never every frame for free.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -130,11 +301,19 @@ export function MapCanvas({ city }: MapCanvasProps) {
     let rafId = 0;
     const tick = () => {
       const viewport = viewportRef.current;
-      if (dirtyRef.current && viewport) {
+      if (viewport && (dirtyRef.current || movingRef.current)) {
         dirtyRef.current = false;
         const dpr = window.devicePixelRatio || 1;
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        drawCity(ctx, cityRef.current, viewport);
+        drawCity(ctx, cityRef.current, viewport, minuteOfDayRef.current);
+        drawOverlays(ctx, cityRef.current, viewport, {
+          lines: linesRef.current,
+          schedules: schedulesRef.current,
+          draft: draftRef.current,
+          hoverLngLat: hoverLngLatRef.current,
+          totalMinutes: totalMinutesRef.current,
+        });
+        drawMask(ctx, viewport, cityRef.current.bounds, readPaperPalette());
       }
       rafId = requestAnimationFrame(tick);
     };

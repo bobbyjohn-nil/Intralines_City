@@ -42,7 +42,7 @@ const OUTER_GAP_M = 700;
 /** How sharply the grid opens up from downtown to the edge. # tune */
 const GAP_POWER = 1.6;
 /** Per-node position jitter so the grid doesn't look like graph paper, metres. # tune */
-const NODE_JITTER_M = 12;
+const NODE_JITTER_M = 0;
 
 /** Grid-line distance from centre (in line-index units) that still counts as primary. # tune */
 const PRIMARY_MAX_LINE_DIST = 1;

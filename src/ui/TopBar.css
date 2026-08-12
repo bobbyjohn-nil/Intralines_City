@@ -1,0 +1,125 @@
+/**
+ * Styling for TopBar.tsx. Colors are the paper palette custom properties only (see styles.css) —
+ * no hardcoded hex, so the bar flips correctly with the dark theme's `prefers-color-scheme` swap.
+ */
+
+.top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: clamp(0.75rem, 2vw, 1.5rem);
+  padding: 0.6rem 5%;
+  background: var(--panel);
+  color: var(--ink);
+  border-bottom: 1px solid var(--muted);
+  font-size: 0.9rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.top-bar__brand {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.top-bar__brand-name {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.top-bar__chips {
+  display: flex;
+  align-items: center;
+  gap: clamp(0.85rem, 2vw, 1.5rem);
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.top-bar__clock {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  letter-spacing: 0.01em;
+}
+
+.top-bar__speed-group {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.top-bar__speed-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
+}
+
+.top-bar__speed-btn:hover {
+  color: var(--ink);
+  background: var(--paper);
+}
+
+.top-bar__speed-btn.is-active {
+  color: var(--ink);
+  background: var(--amber);
+  border-color: var(--ink);
+}
+
+.top-bar__speed-btn:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.top-bar__chip {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.top-bar__chip-label {
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.top-bar__chip-value {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.top-bar__chip--cash .top-bar__chip-value {
+  display: inline-block;
+  min-width: 6ch;
+  text-align: right;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .top-bar__speed-btn {
+    transition: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .top-bar {
+    font-size: 0.8rem;
+  }
+
+  .top-bar__chip-label {
+    display: none;
+  }
+}

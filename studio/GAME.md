@@ -150,8 +150,12 @@ we have no measurement yet, and rewriting on a guess is how weeks disappear.
 ## Art direction
 
 - **Warm paper palette.** `--paper:#f6f1e1`, `--panel:#fffdf6`, `--ink:#2c2a24`, `--muted:#7a7259`,
-  `--blue:#1d3f7a`, `--amber:#ffe9a8`, `--red:#c94f35`. Dark theme flips to `--paper:#23211b`,
-  `--panel:#2c2a24`, `--ink:#ece5d2`, `--blue:#8fb0e8`, `--red:#e08668`.
+  `--blue:#1d3f7a`, `--amber:#ffe9a8`, `--red:#c94f35`.
+- **Light mode only** (decided 2026-08-12). The game no longer follows `prefers-color-scheme`. The
+  map carries its own day/night tint, and dark chrome fights it — a night-tinted map inside a dark
+  UI loses the day/night read entirely. The dark palette is kept in `src/styles.css` under an
+  unapplied `:root[data-theme='dark']` selector so it can return behind a setting; nothing sets that
+  attribute today. **A dark theme is not a missing feature — do not "fix" it.**
 - **Hand-drawn stroke icons everywhere. No emoji in chrome.** One bus drawing is reused from favicon
   to fleet list to loading screen.
 - **Demand layer colors:** residents purple, destinations teal, travel modes blend car grey / bus

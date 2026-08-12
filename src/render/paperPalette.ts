@@ -92,3 +92,17 @@ export function withAlpha(hex: string, alpha: number): string {
   const [r, g, b] = hexToRgb(hex);
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
+
+/**
+ * Forces the next `readPaperPalette()` call to fully re-derive from live CSS, discarding the
+ * cached raw-string comparison — call this whenever something *outside* a normal render call
+ * might have changed the palette (a theme flip), so the next read can't short-circuit on a stale
+ * comparison. `readPaperPalette` itself already re-derives correctly from `getComputedStyle` on
+ * every call it's given; what a theme flip is actually missing is someone telling the canvas a
+ * redraw is owed at all — see `MapCanvas`'s palette-change watcher, which pairs this with marking
+ * the canvas dirty.
+ */
+export function invalidatePaperPaletteCache(): void {
+  cachedRaw = null;
+  cachedPalette = null;
+}
