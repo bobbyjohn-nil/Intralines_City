@@ -6,7 +6,7 @@
  * no eligible street nearby must refuse, not snap to the motorway anyway.
  */
 
-import type { LngLat, RoadEdge, RoadNode, StreetGraph } from '../types';
+import type { LngLat, RoadClass, RoadEdge, RoadNode, StreetGraph } from '../types';
 import { ROAD_SPEED_KMH, STOP_MAX_ROAD_SPEED_KMH } from '../constants';
 import { nearestPointOnSegment } from './geo';
 
@@ -19,6 +19,9 @@ export interface SnapResult {
   readonly t: number;
   readonly position: LngLat;
   readonly distanceM: number;
+  /** The road class of the matched edge — half of a placed stop's save-format §5.1 anchor
+   * (`lng, lat, roadClass`), carried through so `draft.ts` never has to look the edge back up. */
+  readonly roadClass: RoadClass;
 }
 
 /** The one shared predicate for "can a stop go here" — the draft, the line editor's move/upgrade
@@ -47,7 +50,13 @@ export function snapToRoad(click: LngLat, graph: StreetGraph): SnapResult | null
     const nearest = nearestPointOnSegment(click, from.pos, to.pos);
     if (nearest.distanceM > SNAP_MAX_DISTANCE_M) continue;
     if (best === null || nearest.distanceM < best.distanceM) {
-      best = { edgeId: edge.id, t: nearest.t, position: nearest.position, distanceM: nearest.distanceM };
+      best = {
+        edgeId: edge.id,
+        t: nearest.t,
+        position: nearest.position,
+        distanceM: nearest.distanceM,
+        roadClass: edge.roadClass,
+      };
     }
   }
 

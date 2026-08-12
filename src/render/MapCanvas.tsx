@@ -7,7 +7,7 @@
 
 import { useEffect, useRef } from 'react';
 import type { City, LngLat } from '../game/types';
-import type { Draft, Line } from '../game/lines/types';
+import type { Draft, Line, Stop, StopId } from '../game/lines/types';
 import { drawCity, drawMask } from './drawCity';
 import { drawOverlays, pointerMovedPastClickThreshold, type LineBusSchedule } from './drawOverlays';
 import { invalidatePaperPaletteCache, readPaperPalette } from './paperPalette';
@@ -41,6 +41,9 @@ export interface MapCanvasProps {
   readonly minuteOfDay?: number;
   /** Confirmed lines to draw as routes + stops. Absent = none drawn. */
   readonly lines?: readonly Line[];
+  /** The top-level stop collection `lines[].stopIds` resolves against (save-format.md §5).
+   * Absent = no line stops drawn, even if `lines` is present — see `drawOverlays`'s `EMPTY_STOPS_MAP`. */
+  readonly stops?: ReadonlyMap<StopId, Stop>;
   /** Bus schedules to animate, one entry per line that has buses running. Absent, or absent
    * `totalMinutes`, = no buses drawn and no per-frame redraw forced (see the draw loop below). */
   readonly schedules?: readonly LineBusSchedule[];
@@ -63,6 +66,7 @@ export function MapCanvas({
   city,
   minuteOfDay,
   lines,
+  stops,
   schedules,
   draft,
   hoverLngLat,
@@ -81,6 +85,8 @@ export function MapCanvas({
   // registered once, below — always sees the latest props without resubscribing.
   const linesRef = useRef(lines);
   linesRef.current = lines;
+  const stopsRef = useRef(stops);
+  stopsRef.current = stops;
   const schedulesRef = useRef(schedules);
   schedulesRef.current = schedules;
   const draftRef = useRef(draft);
@@ -121,7 +127,7 @@ export function MapCanvas({
   // `movingRef`, not this effect — `totalMinutes` deliberately isn't a dependency here.)
   useEffect(() => {
     dirtyRef.current = true;
-  }, [lines, schedules, draft, hoverLngLat]);
+  }, [lines, stops, schedules, draft, hoverLngLat]);
 
   // Fit the viewport to the city whenever the city itself changes.
   useEffect(() => {
@@ -308,6 +314,7 @@ export function MapCanvas({
         drawCity(ctx, cityRef.current, viewport, minuteOfDayRef.current);
         drawOverlays(ctx, cityRef.current, viewport, {
           lines: linesRef.current,
+          stops: stopsRef.current,
           schedules: schedulesRef.current,
           draft: draftRef.current,
           hoverLngLat: hoverLngLatRef.current,

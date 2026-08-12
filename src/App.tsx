@@ -7,7 +7,7 @@ import { accrue, createTreasury, refund, spend } from './game/economy/ledger';
 import { CENTS_PER_USD, type Treasury } from './game/economy/types';
 import { addStop, canCreate, startDraft, summarizeDraft, undoLastStop } from './game/lines/draft';
 import type { DraftState } from './game/lines/draft';
-import type { Line } from './game/lines/types';
+import { nextId, type Line, type LineId, type Stop, type StopId } from './game/lines/types';
 import { buildRouteSchedule } from './game/buses/schedule';
 import type { LngLat } from './game/types';
 import { MapCanvas } from './render/MapCanvas';
@@ -26,6 +26,12 @@ const STARTING_MODEL = BUS_MODELS[STARTING_BUS_MODEL]!;
 /** Buses put on a line the moment it is created. Milestone 1 has no fleet screen yet, so a new
  * line gets a token service rather than sitting inert. # tune — replaced by the Fleet panel. */
 const BUSES_PER_NEW_LINE = 2;
+
+/** Ids a fresh company mints from. Stands in for the persisted `nextIds.stop`/`nextIds.line`
+ * (save-format.md §5) until saving exists — App owns the live counters below the same way a
+ * loaded save eventually will, so nothing about the threading changes when persistence lands. */
+const FIRST_STOP_ID = 0 as StopId;
+const FIRST_LINE_ID = 0 as LineId;
 
 export function App() {
   // Generated once from a fixed seed and never regenerated — it is large, immutable, and every
@@ -51,8 +57,18 @@ export function App() {
   const [tool, setTool] = useState<Tool>('select');
   const [draft, setDraft] = useState<DraftState | null>(null);
   const [lines, setLines] = useState<readonly Line[]>([]);
+  // Top-level stop collection (save-format.md §5) — lives here, alongside `lines`, rather than
+  // nested inside each `Line`, so a stop shared by two lines is stored once. `nextStopId`/
+  // `nextLineId` are the live counters a draft/line is minted from; see `FIRST_STOP_ID` above.
+  const [stops, setStops] = useState<readonly Stop[]>([]);
+  const [nextStopId, setNextStopId] = useState<StopId>(FIRST_STOP_ID);
+  const [nextLineId, setNextLineId] = useState<LineId>(FIRST_LINE_ID);
   const [hoverLngLat, setHoverLngLat] = useState<LngLat | undefined>(undefined);
   const [notice, setNotice] = useState<string | null>(null);
+
+  // Built fresh only when `stops` actually changes — read by schedule-building and the renderer,
+  // never rebuilt inside either's per-frame path.
+  const stopsById = useMemo<ReadonlyMap<StopId, Stop>>(() => new Map(stops.map((s) => [s.id, s] as const)), [stops]);
 
   // ── Updates ────────────────────────────────────────────────────────────────
   // In-play path only (manual §2): a player-initiated Reload, never capped, never automatic. The
@@ -95,10 +111,10 @@ export function App() {
     () =>
       lines.map((line) => ({
         lineId: line.id,
-        schedule: buildRouteSchedule(line, city.graph, STARTING_MODEL.cruiseSpeedKmh),
+        schedule: buildRouteSchedule(line, stopsById, city.graph, STARTING_MODEL.cruiseSpeedKmh),
         busCount: BUSES_PER_NEW_LINE,
       })),
-    [lines, city.graph]
+    [lines, stopsById, city.graph]
   );
 
   // ── Line drawing ───────────────────────────────────────────────────────────
@@ -106,9 +122,9 @@ export function App() {
   const beginDraft = useCallback(
     (next: Tool) => {
       setTool(next);
-      setDraft(next === 'draw-line' ? startDraft(city.graph) : null);
+      setDraft(next === 'draw-line' ? startDraft(city.graph, nextStopId) : null);
     },
-    [city.graph]
+    [city.graph, nextStopId]
   );
 
   const handleMapClick = useCallback(
@@ -151,19 +167,26 @@ export function App() {
   const handleCreate = useCallback(() => {
     if (draft === null || !canCreate(draft)) return;
     const summary = summarizeDraft(draft);
+    const lineId = nextLineId;
     setLines((current) => [
       ...current,
       {
-        id: current.length,
+        id: lineId,
         name: `Line ${current.length + 1}`,
-        stops: summary.stops,
+        stopIds: summary.stops.map((stop) => stop.id),
         legs: summary.legs,
         totalLengthM: summary.totalLengthM,
       },
     ]);
+    // Commit the draft's stops (and the id ground it staked out) to the shared collection —
+    // until now they only existed inside this one draft. See lines/draft.ts's `DraftState`
+    // comment for why undo/cancel never reach this point.
+    setStops((current) => [...current, ...summary.stops]);
+    setNextStopId(draft.nextStopId);
+    setNextLineId(nextId(lineId));
     setDraft(null);
     setTool('select');
-  }, [draft]);
+  }, [draft, nextLineId]);
 
   // Esc unwinds one level at a time, in the manual's stated order: cancel the draft first, then
   // drop the tool. Panels and selection join this chain as they arrive.
@@ -197,6 +220,7 @@ export function App() {
           minuteOfDay={calendar.minuteOfDay}
           totalMinutes={clock.totalMinutes}
           lines={lines}
+          stops={stopsById}
           schedules={schedules}
           {...(draftSummary !== null ? { draft: draftSummary } : {})}
           {...(hoverLngLat !== undefined ? { hoverLngLat } : {})}

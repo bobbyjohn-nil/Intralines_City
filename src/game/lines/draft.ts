@@ -23,7 +23,11 @@ import {
 } from '../constants';
 import { createPathfindContext, findPath, type PathfindContext } from './pathfind';
 import { snapToRoad, SNAP_MAX_DISTANCE_M } from './snapToRoad';
-import type { Draft, RouteLeg, Stop } from './types';
+import { nextId, type Draft, type RouteLeg, type Stop, type StopId } from './types';
+
+/** The id `startDraft` mints from when the caller doesn't have a counter to thread yet (every
+ * unit test that draws exactly one draft, and any draft's very first stop in a fresh company). */
+const FIRST_STOP_ID = 0 as StopId;
 
 const SECONDS_PER_MINUTE = 60;
 const KMH_TO_MS = 1000 / 3600;
@@ -47,10 +51,17 @@ export interface DraftState {
   readonly stops: readonly Stop[];
   /** `legs.length === max(0, stops.length - 1)`. */
   readonly legs: readonly RouteLeg[];
+  /** The id `addStop` will assign next. Threaded in from the caller (`App.tsx` passes its own
+   * running counter, mirroring the persisted `nextIds.stop` from save-format.md §5) rather than
+   * reset to 0 per draft — that per-draft reset was the bug where two independently drawn lines'
+   * first stops both got id 0. `undoLastStop`/`cancelDraft` roll this back exactly as far as the
+   * stops they remove, since an unconfirmed stop's id was never actually committed to anything —
+   * see those functions' comments. */
+  readonly nextStopId: StopId;
 }
 
-export function startDraft(graph: StreetGraph): DraftState {
-  return { graph, pathfindContext: createPathfindContext(graph), stops: [], legs: [] };
+export function startDraft(graph: StreetGraph, nextStopId: StopId = FIRST_STOP_ID): DraftState {
+  return { graph, pathfindContext: createPathfindContext(graph), stops: [], legs: [], nextStopId };
 }
 
 export type AddStopResult =
@@ -117,18 +128,21 @@ export function addStop(state: DraftState, click: LngLat): AddStopResult {
   }
 
   const stop: Stop = {
-    id: state.stops.length,
+    id: state.nextStopId,
     // Real city packs carry OSM street names (manual §9: "named after their streets"); the
     // road graph here has none, so this is a placeholder until that data exists. # tune
     name: `Stop ${state.stops.length + 1}`,
     position: snap.position,
+    roadClass: snap.roadClass,
     edgeId: snap.edgeId,
     edgeT: snap.t,
+    orphaned: false,
+    movedM: null,
   };
 
   const previous = state.stops[state.stops.length - 1];
   if (previous === undefined) {
-    return { ok: true, state: { ...state, stops: [stop] } };
+    return { ok: true, state: { ...state, stops: [stop], nextStopId: nextId(state.nextStopId) } };
   }
 
   const leg = routeLeg(state.graph, state.pathfindContext, previous, stop);
@@ -141,24 +155,38 @@ export function addStop(state: DraftState, click: LngLat): AddStopResult {
 
   return {
     ok: true,
-    state: { ...state, stops: [...state.stops, stop], legs: [...state.legs, leg] },
+    state: {
+      ...state,
+      stops: [...state.stops, stop],
+      legs: [...state.legs, leg],
+      nextStopId: nextId(state.nextStopId),
+    },
   };
 }
 
-/** Removes the most recently added stop and the leg that reached it. A no-op on an empty draft. */
+/** Removes the most recently added stop and the leg that reached it. A no-op on an empty draft.
+ * Rolls `nextStopId` back to the id of the stop it just removed, since that id was never
+ * committed to anything outside this draft — the next `addStop` reuses it rather than burning
+ * one, which is what makes "add three, undo three" restore the exact fresh-draft state
+ * (`characterization.test.ts`'s "undo is exactly inverse to add"). */
 export function undoLastStop(state: DraftState): DraftState {
   if (state.stops.length === 0) return state;
+  const removed = state.stops[state.stops.length - 1]!;
   return {
     ...state,
     stops: state.stops.slice(0, -1),
     legs: state.legs.slice(0, -1),
+    nextStopId: removed.id,
   };
 }
 
 /** Drops every stop and leg. Keeps the draft's `PathfindContext` — its scratch buffers don't
- * belong to any particular set of stops, so there's nothing about them worth discarding. */
+ * belong to any particular set of stops, so there's nothing about them worth discarding. Also
+ * rolls `nextStopId` back to where it stood before this draft placed anything, same reasoning as
+ * `undoLastStop` — a cancelled draft never committed any of its ids. */
 export function cancelDraft(state: DraftState): DraftState {
-  return { ...state, stops: [], legs: [] };
+  const nextStopId = state.stops.length > 0 ? state.stops[0]!.id : state.nextStopId;
+  return { ...state, stops: [], legs: [], nextStopId };
 }
 
 export function canCreate(state: DraftState): boolean {

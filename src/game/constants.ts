@@ -61,6 +61,36 @@ export const STOP_MAX_ROAD_SPEED_KMH = 55;
  * and its prose can never drift apart. SPEC */
 export const MIN_STOPS_TO_CREATE_LINE = 2;
 
+// ── Save re-anchor (studio/docs/design/save-format.md §5.2) ──────────────────
+// Not wired to any code yet — the re-anchor pass itself (rebuild `edgeId`/`edgeT` for every
+// saved stop against the pack's edge grid on load) is a later refactor. These exist now because
+// `Stop.roadClass`/`orphaned`/`movedM` (lines/types.ts) were added ahead of that pass, and this
+// is where their numbers belong once it lands, rather than a second trip through this file then.
+
+/** A saved stop within this distance of a same-class candidate edge snaps silently — the "Exact"
+ * tier. Metres. TUNE */
+export const STOP_REANCHOR_EXACT_DISTANCE_M = 2;
+
+/** Two candidates whose `cost` (distance + class penalty) are within this much of each other are
+ * "Ambiguous" and broken by the §5.2 tie-break order instead of by `cost` alone. Metres. TUNE */
+export const STOP_REANCHOR_AMBIGUOUS_COST_MARGIN_M = 3;
+
+/** `cost` penalty added when a candidate edge is one road-class tier away from the saved stop's
+ * `roadClass`. Metres. TUNE */
+export const STOP_REANCHOR_CLASS_PENALTY_ONE_TIER_M = 12;
+
+/** `cost` penalty when a candidate edge is two or more road-class tiers away. Metres. TUNE */
+export const STOP_REANCHOR_CLASS_PENALTY_FAR_M = 30;
+
+/** Radius candidates are searched within, applied to raw distance (never to `cost`, so class
+ * preference can never drag a stop further from where the player put it). A stop with nothing
+ * inside this radius becomes `orphaned` rather than snapped or deleted. Metres. TUNE */
+export const STOP_REANCHOR_MAX_DISTANCE_M = 40;
+
+/** A "Near" snap that moves a stop more than this many metres is worth a session-log line, not
+ * just a silent `movedM` record. Metres. TUNE */
+export const STOP_REANCHOR_LOG_THRESHOLD_M = 15;
+
 // ── Buses ────────────────────────────────────────────────────────────────────
 
 /** Acceleration, m/s². SPEC */
