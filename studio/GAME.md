@@ -28,6 +28,31 @@ commuters decide whether your service beats driving.
    is allowed to be complex because the player can always see why it did what it did.
 3. **The map shows shapes, panels show numbers.** Spatial questions get answered spatially; exact
    figures live in the UI layer.
+4. **It plays in five seconds.** Open it and you are running a transit company — no staged loader, no
+   multi-megabyte first run, no third-party fetch, cities generated instantly from a seed.
+
+### Pillar 4 after Route B — what was dropped and what is protected
+
+**Dropped, deliberately (2026-08-12): the single-file property.** Models now ship as `.glb` files in a
+served `assets/` folder rather than base64-embedded. Embedding inflates every model by roughly a third
+and does not gzip back, so a self-contained build would cost more download than a directory does. The
+game may be a directory.
+
+**Everything else about pillar 4 still holds, and is the thing to protect:**
+
+- **No network fetches to third parties.** Assets are served from the game's own origin, alongside
+  `index.html`. This is unchanged and non-negotiable.
+- **No staged loader.** The player never watches a progress bar before playing.
+- **No multi-megabyte first run.** The current baseline is ~72 KB gzipped; that is the number any
+  model budget is measured against.
+- **Cities still generate instantly from a seed.** Riverton is procedural and stays procedural.
+- **If loading models threatens "plays in five seconds", models load *after* the city is already
+  playable, not before.** A placeholder that becomes a bus is correct; a spinner that becomes a game
+  is not.
+
+**The offline constraint is unchanged and now covers assets too:** everything under `assets/` must be
+precached by the service worker, so the second load works with the network unplugged exactly as the
+first did.
 
 ## Core loop
 
@@ -50,8 +75,9 @@ evidence. Change any `[chosen]` row before implementation starts and the rest of
 | Platform | Browser, offline-capable (service worker + IndexedDB) — *stated* |
 | Build tool | **[chosen]** Vite |
 | UI framework | **[chosen]** React — the manual says menus are "portaled outside the dock", which is React's idiom |
-| Map rendering | MapLibre GL JS **[chosen]** for OpenFreeMap vector tiles restyled to the paper palette with 3D extrusions — *the tile source is stated*; **plus** a self-rendered offline basemap from the city pack — *stated* |
-| 3D (buses, station diorama) | **[chosen]** Three.js, via a custom MapLibre layer for on-map buses |
+| Rendering | **WebGL via three.js — decided 2026-08-12, "Route B".** The map, the vehicles and the buildings are real geometry with a movable camera. This **replaces** the Canvas 2D basemap, which was the whole renderer until now |
+| Model format | **glTF 2.0 binary (`.glb`)** — one file per model carrying geometry, materials and textures. **Not `.obj`, not `.fbx`.** Models are authored externally and supplied by the owner; assume the count grows |
+| Asset delivery | A served `assets/` folder next to `index.html`. **The game is now a directory, not one file** — see the pillar note below |
 | Simulation | Web Worker, debounced ~250 ms on network change — *stated* |
 | Persistence | One save per city in `localStorage`; city packs (10–40 MB) in IndexedDB under a format version — *stated* |
 | Tests | **[chosen]** Vitest |
@@ -186,6 +212,39 @@ measures palette, contrast hierarchy, camera framing, UI density and type scale 
 from an impression. Implementing from a description is how a copy ends up resembling the reference
 in words and nothing like it on screen.
 
+## The contrast gate under Route B — read before writing any 3D rendering code
+
+**What it actually is.** There is no separate accessibility binary or CI step. The gate is a set of
+RGB-distance regression assertions living in `src/render/drawOverlays.test.ts` (with helpers checked
+by `paperPalette.test.ts`), run by `npx vitest run` and enforced by CI. They exist because a day of
+playtests found buses invisible five separate ways, and each fix left an assertion behind: bus fill
+versus paper, versus every road class, versus the route line it sits on, versus a stop marker;
+bus-marker-to-route width ratio; stripe-to-route colour distance — each checked at noon **and**
+composited under the 0.22 night tint.
+
+**What still measures after the move to WebGL:** the palette itself. `mixHex`, `withAlpha`,
+`mixHexAlpha` and the derived colour tables are pure functions of the CSS variables and keep working
+unchanged. Any assertion about *what colour we intend a thing to be* survives intact.
+
+**What stops measuring, and this is the important part.** Those assertions compare **intended fill
+colours**, not rendered pixels. In Canvas 2D with flat fills the two were the same thing, which is why
+the tests were trustworthy. In a lit 3D scene they are not: a material's base colour goes through
+lighting, shading, shadowing, tone mapping and possibly fog before it reaches a pixel. Two materials
+that differ by 90 RGB units can render nearly identically under one light and obviously differently
+under another.
+
+**So the failure mode is not a check that silently stops running — it is worse.** The assertions keep
+passing, keep reporting green, and stop describing anything a player sees. A gate that fails loudly
+is a good gate; a gate that passes meaninglessly is a liability, because it buys confidence it has
+not earned.
+
+**What must replace it, and this is a hard requirement of the 3D work, not a follow-up:** contrast
+must be measured on **rendered output** — read pixels back from the WebGL framebuffer in a headless
+context and assert distances on those, under the lighting the game actually ships. The renderer spec
+must say how, and the replacement must land in the same change that makes the old assertions
+meaningless. **Do not delete the old assertions before the new ones exist**, and do not leave both in
+a state where the old ones still gate CI while measuring nothing.
+
 ## Audio
 
 **None described in the manual.** Either the game is silent or audio is undocumented — confirm before
@@ -290,6 +349,10 @@ not hold, the fix is a coarser demand grid, not shipping a city that stutters.
 
 ## Scope
 
+- **Renderer:** WebGL/three.js, real geometry, movable camera. Models imported as `.glb` from a
+  served `assets/` directory. **The Canvas 2D basemap is superseded** — everything in `src/render/`
+  was written against it, and the day/night tint, the road-class ladder, the park contrast work, the
+  bus marker and the route clipping all need re-deciding in a lit 3D scene rather than porting.
 - **In:** five cities — see Featured cities below; depots (max 5, three
   levels, three add-ons); five bus models with Mk I–III upgrades; five stop tiers; two timetable
   modes; fares and express; two lenders; quarterly report cards.

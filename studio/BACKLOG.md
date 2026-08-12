@@ -21,6 +21,35 @@ Goal: a bus drives a line you drew, on a fake city, and it costs money. No real 
 drawing, bus motion and the money floor all ship and are verified in a browser. Everything below is
 follow-up work found while building it.
 
+## Handoff — direction change to 3D, 2026-08-12
+
+**Stopped mid-verification, deliberately.** The tree is clean at `360a823`, 276 tests pass, the build
+is green. Nothing was half-applied, so there was no diff to stash.
+
+**Where we got to.** Milestone 1 ships and is verified. Milestone 2's three systems — demand, saving,
+depots — are built, tested, and demand and saving are wired into the app. Four defects from the last
+playtest were fixed and committed: the missing return-trip factor (riders went to work and never came
+home), route strokes overshooting, the top bar garbling its own text at narrow widths, and the riders
+chip claiming zero before it had an answer.
+
+**What was left unverified**, and is now partly moot:
+
+- **Route overshoot fix — unconfirmed in a browser.** The fix is committed and unit-tested, including
+  the half nobody reported: a stop sitting mid-edge at a *turn* appears in two legs and both drew its
+  edge in full, so the stroke doubled back at every corner. Two playtests were spawned to confirm it
+  visually; the first stalled on a watchdog, the second was stopped by the direction change.
+  **Under Route B this code is replaced**, but the *geometry lesson* carries over — a 3D route ribbon
+  will need the same clipping to `edgeT`, and the same trap is available.
+- **Top bar container-query fix — unconfirmed in a browser.** Unaffected by the renderer change; the
+  top bar is DOM, not canvas. Still needs a visual pass at several widths.
+- **Riders-chip-absent-until-answered — unconfirmed in a browser.** Also DOM, also unaffected.
+- **Riders magnitude — confirmed.** 143/day on a 3-stop 6.4 km line, against 16 before the fix. A
+  sparse line legitimately carries tens until transfers exist.
+
+**Still true and still open** (see the sections below): the sim is not in a worker despite the stack
+table saying so, the possible input lag after rapid drawing was never reproduced, and depots have no
+UI.
+
 **Found verifying Milestone 2 (2026-08-12):**
 
 - [ ] **The sim is not in a worker.** `GAME.md`'s stack table states "Web Worker, debounced ~250 ms on network change" and the manual says the same; `computeDemand` actually runs on the main thread via `setTimeout` in `App.tsx`. No long tasks were measured at Riverton's scale (96 zones, 8 lines) so it is not hurting yet — but `ZONE_CAP = 512` is 5× the zones and the spec's own note says that scale is "reasoning, not measurement". Either move it to a worker or correct the documentation; a stack table that describes a worker nobody built is worse than either
