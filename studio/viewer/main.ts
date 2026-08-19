@@ -90,6 +90,17 @@ refCubeLabel.textContent = "1 m³ reference cube";
 
 // ---- loaders ------------------------------------------------------------------------------
 
+// KTX2 transcoder (public/basis/basis_transcoder.{js,wasm}, ~515 KB) is deliberately NOT
+// precached (see vite.config.ts's runtimeCaching entry) — it would be 515 KB paid by every
+// visitor to this tool whether or not the .glb they load has a KTX2 texture in it. Constructing
+// the loader and calling .detectSupport() here does NOT fetch it: three.js's KTX2Loader only
+// fetches basis_transcoder.{js,wasm} from `.init()`, which is called from `_createTexture()` the
+// first time a KTX2 texture is actually being transcoded (see
+// node_modules/three/examples/jsm/loaders/KTX2Loader.js). So the network cost is already deferred
+// to "first KTX2 texture actually loaded" for free, at the loader level — do not eagerly call
+// `.init()` or otherwise warm this loader "to avoid a stall on first load"; that would reintroduce
+// exactly the eager download this setup avoids. vite.config.ts's CacheFirst route covers the
+// repeat-visit case once that lazy fetch has happened once.
 const ktx2Loader = new KTX2Loader().setTranscoderPath("/basis/").detectSupport(renderer);
 const loader = new GLTFLoader();
 loader.setMeshoptDecoder(MeshoptDecoder);

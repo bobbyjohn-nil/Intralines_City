@@ -156,10 +156,22 @@ first run into a download.
 | Building/landmark kit piece | 12 | ≤ 1,500 | ≤ 20 KB |
 | Shared texture atlas | 1 | — | 512×512 KTX2/ETC1S, ≤ 40 KB |
 
+**Pipeline infrastructure** — decoders/transcoders the above formats need at runtime, not model
+content, and not counted against the model classes' byte budgets above. Added after the first pass
+at the model pipeline shipped one of these unbudgeted and it went unnoticed until it was measured:
+
+| Component | Real size | Precached? |
+|---|---|---|
+| Meshopt decoder (geometry) | ~5 KB | Yes — bundles inline in the JS that needs it, so this is not a separate fetch at all (§5 point 6). |
+| KTX2/Basis transcoder (`basis_transcoder.js` + `.wasm`, textures only) | ~515 KB | **No — lazy.** Fetched same-origin on first KTX2 texture actually transcoded (not at startup, not merely because a `.glb` loaded), then runtime-cached (`CacheFirst`) so a repeat visit stays offline-safe. Never in `workbox.globPatterns`. Today this is 515 KB nobody pays: vehicles carry no texture (this section, "no per-model texture" below) and buildings are procedural prisms until model-pipeline step 4 lands — precaching it unconditionally would be ~7× the entire game bundle spent on a file currently unused by anything. |
+
 **Hard caps:** any single file ≤ **120 KB**; any single texture ≤ 1024², power-of-two; total
-`assets/` ≤ **900 KB on disk, ≤ 600 KB transferred**. Vehicles carry **no per-model texture** — livery
-is the company brand colour and the line stripe applied at runtime to named material slots
-(`Body`, `Stripe`, `Glass`, `Light_L`, `Light_R`), so a growing fleet costs geometry only.
+`assets/` ≤ **900 KB on disk, ≤ 600 KB transferred**. Pipeline infrastructure above is exempt from
+this total on the same basis it's exempt from the precache: it is fetched, if ever, only in
+response to content that isn't shipped yet, and is never part of what a first load pays for.
+Vehicles carry **no per-model texture** — livery is the company brand colour and the line stripe
+applied at runtime to named material slots (`Body`, `Stripe`, `Glass`, `Light_L`, `Light_R`), so a
+growing fleet costs geometry only.
 
 **What happens when a supplied model misses, in three tiers** — actionable by a person, because the
 owner supplies these:
