@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Intralines — model viewer</title>
+    <!--
+      Studio tooling (renderer-3d.md deliverable 2). Lives outside src/ on purpose — CLAUDE.md's
+      repository layout is explicit that studio/ ships nothing, and this page never appears in
+      the production build (vite.config.ts's rollupOptions.input only names the game's index.html).
+      Run it with `npm run viewer`.
+    -->
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <aside id="panel">
+        <h1>Model viewer</h1>
+        <p class="hint">
+          Loads one <code>.glb</code> at map scale, under the lighting the game ships
+          (renderer-3d.md §6): hemisphere sky/ground, one clamped directional key, no tone
+          mapping, no shadow maps.
+        </p>
+
+        <label class="field">
+          <span>Load a file</span>
+          <input id="file-input" type="file" accept=".glb" />
+        </label>
+        <div id="drop-zone">or drop a .glb here</div>
+
+        <div class="field">
+          <span>Budget category</span>
+          <select id="category-select">
+            <option value="vehicles">Vehicle (≤4,000 tris, ≤45 KB)</option>
+            <option value="depots">Depot (≤6,000 tris, ≤60 KB)</option>
+            <option value="stops">Stop furniture (≤2,500 tris, ≤30 KB)</option>
+            <option value="buildings">Building/landmark kit piece (≤1,500 tris, ≤20 KB)</option>
+          </select>
+        </div>
+
+        <div id="processed-list-wrap">
+          <span>Already in public/assets/models/</span>
+          <div id="processed-list"></div>
+        </div>
+
+        <div id="stats">
+          <p class="empty">No model loaded.</p>
+        </div>
+      </aside>
+      <main id="viewport">
+        <canvas id="canvas"></canvas>
+      </main>
+    </div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
