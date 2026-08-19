@@ -4,13 +4,14 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
+    "vendor:basis": "node scripts/vendor-basis.mjs",
+    "dev": "npm run vendor:basis && vite",
+    "build": "npm run vendor:basis && tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
     "models": "vite-node scripts/models/build.ts",
-    "viewer": "vite --open /studio/viewer/index.html"
+    "viewer": "npm run vendor:basis && vite --open /studio/viewer/index.html"
   },
   "dependencies": {
     "react": "^18.3.1",

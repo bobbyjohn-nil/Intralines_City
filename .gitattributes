@@ -26,10 +26,25 @@
 *.mp4    filter=lfs diff=lfs merge=lfs -text
 *.webm   filter=lfs diff=lfs merge=lfs -text
 
+# .wasm — general-purpose net, not for public/basis/basis_transcoder.wasm specifically. That file
+# is vendored at build time from node_modules/three (see scripts/vendor-basis.mjs) and
+# .gitignore'd, so it is never committed at all. This pattern exists for the NEXT wasm binary that
+# lands uncopied — a physics engine, another codec — so it doesn't repeat the mistake of landing
+# as a plain blob the way basis_transcoder.wasm originally did (still in history; see git log).
+*.wasm   filter=lfs diff=lfs merge=lfs -text
+
+# .ktx2 — the compressed-texture output of `npm run models` (renderer-3d.md §5). Built output
+# lives under public/assets/ and is .gitignore'd like the .glb output next to it, so in the normal
+# case this pattern never fires. It's here so a force-added or deliberately-committed .ktx2 (e.g.
+# a viewer fixture) doesn't land as a plain blob either.
+*.ktx2   filter=lfs diff=lfs merge=lfs -text
+
 # Small binaries — not worth LFS, but never diff or merge them.
-*.ico   binary
-*.ttf   binary
-*.otf   binary
+*.ico    binary
+*.ttf    binary
+*.otf    binary
+*.woff   binary
+*.woff2  binary
 
 # SVG is source, not a binary — icons are hand-authored and must diff.
 *.svg   text
