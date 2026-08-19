@@ -543,3 +543,14 @@ design is the one place cheapness is expensive.
 They are not part of the app bundle, so `test-engineer` can work in `src/` without hot-reloading the
 page underneath a live playtest. That, not agent count, was the real constraint on running work
 concurrently.
+
+**71. The 516 KB blob stays in history** (2026-08-12)
+`basis_transcoder.wasm` landed as a plain git object because `.gitattributes` covered png, glb, wav
+and the rest but not `.wasm`. It is now de-vendored (copied from `node_modules/three` at build time,
+gitignored) and the pattern list is widened, so it cannot recur — that was the part that mattered.
+*Not rewriting history to remove it.* It is 516 KB in a 3.5 MB repo, and the rewrite would need a
+force-push into a 24-local-versus-2-remote divergence. The cost of carrying it is a rounding error;
+the cost of the rewrite is a real chance of losing commits. Revisit only if this happens repeatedly,
+which the widened patterns now prevent.
+*The general rule worth keeping:* a binary-handling net is only as good as its least-anticipated
+file type. Widen the net at the moment you notice a gap, not at the moment it costs you.
