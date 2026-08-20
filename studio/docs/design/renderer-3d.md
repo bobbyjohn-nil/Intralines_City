@@ -145,17 +145,147 @@ is deleted before its replacement exists, and no old assertion gates CI after it
 
 ## 4. Model budget
 
-Baseline: the production bundle is ~72 KB gzipped. The budget is set so `assets/` can never turn the
-first run into a download.
+Baseline, re-measured: the critical path is **220.3 KiB gzipped** ([baselines.md](../baselines.md)),
+up 2.93× from 75.2 KiB when this section was first written against "~72 KB". The budget is set so
+`assets/` can never turn the first run into a download — and, per pillar 4, models arrive *after* the
+city is playable, so they are not first-paint cost the way the bundle is.
 
-| Class | Count (v1) | Tris each | Bytes each (`.glb`, meshopt + KTX2) |
-|---|---|---|---|
-| Vehicle (5 models × Mk I–III) | 15 | ≤ 4,000 | ≤ 45 KB |
-| Depot (3 levels) | 3 | ≤ 6,000 | ≤ 60 KB |
-| Stop furniture (5 tiers) | 5 | ≤ 2,500 | ≤ 30 KB |
-| Building/landmark kit piece | 12 | ≤ 1,500 | ≤ 20 KB |
-| Person (3 poses + 1 spare) | 4 | ≤ 600 LOD0 / 200 LOD1 *(generated)* | ≤ 12 KB |
-| Shared texture atlas | 1 | — | 512×512 KTX2/ETC1S, ≤ 40 KB |
+### What the triangle limit is actually protecting
+
+Worked out with numbers, because the previous version defended 4,000 as a rendering limit and it is
+not one.
+
+**1. GPU cost — the honest answer is that the GPU does not notice.** Design cap **60 vehicles rendered
+at once** `# tune` (5 depots, a mature fleet of 40–80, most of it in frame at default framing;
+typical is 8–25). At 31,000 tris that is 1.86 M tris/frame, ~112 M tris/s at 60 fps — roughly
+0.4–0.6 ms of vertex work on the M1 Pro that produced baselines.md, which sustains several hundred
+million. VRAM after decode is ~550 KB per model, irrelevant. **Absolute triangle count is not the
+constraint at this fleet size and should never again be defended as one.**
+
+**2. Triangle *density* at map distance — this one is real.** §3 asserts a bus footprint ≥ 120 px at
+640×360, i.e. ~750 px at 1600×900. A 31,000-tri bus in 750 px is **41 triangles per pixel**; every
+triangle rasterises to at least one 2×2 quad, so that is ~124,000 fragment invocations for a 750 px
+object — **165× overdraw**, ×60 buses = 7.4 M quad invocations per frame for objects covering 45,000
+px total. At 900 tris the same bus is 1.2 tri/px and ~4.8× overdraw. Micro-triangle overdraw is what
+the limit is protecting on the map, and **it is fixed by an LOD, not by a smaller authored mesh.**
+It also protects the tail case baselines.md just found: SwiftShader already costs a 726–926 ms long
+task with *zero* models; 1.86 M tris/frame there is not a risk, it is unplayable.
+
+**3. Bytes — the dominant constraint, and what the triangle number is a proxy for.** At the planning
+rate of **11.5 B/tri**, one 31,000-tri model is ~357 KB, over half the entire asset budget.
+**State the triangle allowance as bytes-derived and stop calling it a rendering limit.**
+
+> **The 11.5 B/tri rate is not measured — it is `45 KB ÷ 4,000 tris` read backwards, the budget
+> explaining itself.** Published meshopt results for quantised position+normal geometry land at
+> **4–6 B/tri**. This is the single highest-value measurement left in this file: `npm run models`
+> must report **measured bytes per triangle per file**, and the LOD0 allowance below **ratchets by
+> `11.5 / measured`** the moment it does. At 6 B/tri the allowance is ~11,500, not 6,000. Nobody
+> should decimate a hero asset before that number exists.
+
+### The table — ceilings, plus a ledger that must add up
+
+**The rows are per-class *ceilings*, and they cannot all be maxed.** A ceiling is what a rejection
+message can quote at one file; a sum cannot reject a file, only a set. The old table's ceilings summed
+to **1,333 KB against a 900 KB cap** — 1.48× over, enforcing nothing. The fix is not to shrink the
+ceilings until they happen to sum right; it is to **assert the actual shipped total separately.**
+
+| Class | Count (v1) | Tris — LOD0 authored / LOD1 generated | Bytes each (ceiling) | Expected v1 total |
+|---|---|---|---|---|
+| Vehicle mesh (5 families, Mk I–III share geometry) | **5** | **6,000 / 900** | ≤ **80 KB** | 400 KB |
+| Depot (1 shell + 2 level modules) | 3 | 3,000 / 500 | ≤ 42 KB | 126 KB |
+| Stop furniture (5 tiers, additive on a shared post) | 5 | 1,200 / 250 | ≤ 18 KB | 90 KB |
+| Person (3 poses + 1 spare) | 4 | 600 / 200 | ≤ 12 KB | 48 KB |
+| | | | **Ledger** | **664 KB disk / ~611 KB transferred** |
+
+*Deferred out of v1, and landing either one requires re-deriving this ledger, not appending to it:*
+the 12-piece landmark kit (buildings are procedural prisms through §8 step 3) and the shared 512²
+texture atlas (nothing textured ships yet). Together they were 280 KB of a budget that had no room
+for them.
+
+**Three assertions, because one was never enough** (the manifest test §5 step 3 already establishes):
+
+1. **Per file** — every manifest entry inside its class ceiling. *Exists today.*
+2. **Per total, new** — `Σ manifest bytes ≤ 720 KB` on disk and `Σ gzipped ≤ 670 KB`, failing the
+   build with the ledger printed. Without this the ceilings are decoration.
+3. **Per class product, new** — `maxConcurrent × lod1Triangles ≤ classAllowance`, the same shape as
+   the crowd rule. Vehicles: 60 × 900 = 54,000 ≤ **60,000** `# tune`.
+
+### Lever 1 — LOD: yes, and it is the whole answer to the density problem
+
+Vehicles work exactly like people: **the owner authors LOD0, the pipeline generates LOD1** (or uses a
+supplied `<name>_lod1`). On the map a bus is ~30 px and detail is invisible; in the §16 station view
+it is close-up and detail is the entire point. One mesh cannot serve both honestly.
+
+**Switch on projected footprint, not distance** — §7.1 already applies a `max(1, minPx/projectedPx)`
+exaggeration, so a distance-based switch would put a floor-clamped 30 px bus on LOD0. **LOD0 above a
+64 px major axis, LOD1 below, 8 px hysteresis** `# tune`. In practice the map draws LOD1 essentially
+always and the station view draws LOD0 essentially always.
+
+**With LOD1 in place the vehicle class leaves the GPU budget entirely:** 200 buses × 900 = 180,000
+tris/frame, which is nothing. So **no vehicle is ever culled or LOD-dropped for budget reasons** —
+unlike riders, a bus is a gameplay object, and the budget is sized so it never has to be. The only
+remaining vehicle budget is bytes.
+
+**Feel:** the LOD swap is a geometry swap at a frame boundary with no material change and no fade —
+LOD1 is generated *from* LOD0, so the silhouette is within a pixel at the switch size. Asserted on the
+id buffer: crossing the switch changes the footprint by ≤ **2 px**.
+
+### Lever 2 — on-demand loading: yes for the scene, no as byte relief
+
+**It does not change the constraint from "all models must fit" to "any one model must fit", and
+claiming it does would break the offline guarantee.** GAME.md is explicit: everything under `assets/`
+is precached by the service worker, so every shipped byte is fetched in session one regardless of
+what the player owns. The total cap above stands.
+
+**What it does change is decode and upload**, which is the thing that produced 726–926 ms long tasks
+on the software path. A vehicle's `.glb` is parsed and uploaded **on first spawn of that type**, from
+the precache, not the network — a cache read plus decode, ~10–30 ms, one model at a time, never five
+at once.
+
+**What the player sees buying a bus they have never seen:** the purchase confirms instantly; the bus
+leaves the depot as §6's rounded box in the company brand colour with the line stripe, and cross-fades
+to the model over 250 ms as soon as the decode lands — typically within a frame or two. If the
+precache has not reached that file yet (first session, still downloading), the placeholder simply
+persists; the bus runs, earns and reports normally, because the renderer is never load-bearing.
+Fleet-list and shop thumbnails use the same placeholder silhouette — a shop screen never forces a
+load.
+
+### Lever 3 — shared geometry across Mk I–III: yes, and it is free
+
+**The manual's §12 Mk I–III are stat upgrades, and stat upgrades do not need meshes.** Five meshes,
+fifteen stat rows. This alone takes the vehicle class from 675 KB to 400 KB.
+
+Mk still reads on screen without a second file: **two optional named nodes per family — `Mk2_Add`,
+`Mk3_Add` (roof AC unit, charging rails, whatever the family wants), ≤ 400 tris each inside the 6,000
+budget.** Instancing survives because visibility is not per-node: the pipeline bakes an `MK_TAG` byte
+per vertex, and the vertex shader collapses any vertex whose tag exceeds the instance's `mk` to zero,
+so the triangles go degenerate and are culled before rasterisation. One mesh, one material, one draw
+call, three silhouettes.
+
+### The number to author to
+
+**6,000 triangles per vehicle, one mesh per family, Mk I–III included.** `# tune` — derived as
+`80 KB ÷ 11.5 B/tri` minus the 900-tri LOD1, not chosen. The pipeline generates the 900-tri map LOD;
+**the owner authors one number and only one.**
+
+Six thousand buys a fully modelled exterior: bevelled panel edges, six wheels with arches, mirrors,
+wipers, a roof hatch, door seams as geometry, and a suggested interior through the glass. It does not
+buy tread pattern, panel lines or seat detail — those are texture jobs and vehicles carry no texture.
+
+**The five supplied models at ~31,000 tris and 2.5–3.1 MB: genuinely need reduction, but do not start
+yet.**
+
+- **As-is, no.** 2.5–3.1 MB is ~85 B/tri, which means unquantised float attributes and textures —
+  and vehicles carry no per-model texture by rule, so the first pipeline pass will drop a large
+  fraction before anyone touches a vertex. **Run one file through `npm run models` and read the
+  reported B/tri first.**
+- **As LOD0 with generation, not at 31,000.** The auto-fix band is 1×–2× budget (12,000); 31,000 is
+  5.2× and hard-rejects. And auto-decimation on the asset the station view stares at will read worse
+  than hand reduction.
+- **So: reduce to 6,000** — an 81% cut, not the 87% the old budget demanded, and against 5 files
+  rather than 15. **If the measured rate comes back near 6 B/tri the allowance ratchets to ~11,500**
+  and these files land inside the auto-fix band, which is a different conversation. Measure, then
+  decimate.
 
 **Pipeline infrastructure** — decoders/transcoders the above formats need at runtime, not model
 content, and not counted against the model classes' byte budgets above. Added after the first pass
@@ -167,7 +297,11 @@ at the model pipeline shipped one of these unbudgeted and it went unnoticed unti
 | KTX2/Basis transcoder (`basis_transcoder.js` + `.wasm`, textures only) | ~515 KB | **No — lazy.** Fetched same-origin on first KTX2 texture actually transcoded (not at startup, not merely because a `.glb` loaded), then runtime-cached (`CacheFirst`) so a repeat visit stays offline-safe. Never in `workbox.globPatterns`. Today this is 515 KB nobody pays: vehicles carry no texture (this section, "no per-model texture" below) and buildings are procedural prisms until model-pipeline step 4 lands — precaching it unconditionally would be ~7× the entire game bundle spent on a file currently unused by anything. |
 
 **Hard caps:** any single file ≤ **120 KB**; any single texture ≤ 1024², power-of-two; total
-`assets/` ≤ **900 KB on disk, ≤ 600 KB transferred**. Pipeline infrastructure above is exempt from
+`assets/` ≤ **720 KB on disk, ≤ 670 KB transferred**. The old 900/600 pair implied 33% compression;
+meshopt geometry gzips ~5–10%, so the two numbers now sit where that is true. 670 KB is derived, not
+picked: **220.3 KiB of critical path + 670 KB of assets ≈ 890 KB of first run**, the last budget that
+can honestly claim to be under pillar 4's own word *multi-megabyte* — and the assets half arrives
+after the city is playable. Pipeline infrastructure above is exempt from
 this total on the same basis it's exempt from the precache: it is fetched, if ever, only in
 response to content that isn't shipped yet, and is never part of what a first load pays for.
 Vehicles carry **no per-model texture** — livery is the company brand colour and the line stripe
@@ -177,8 +311,8 @@ growing fleet costs geometry only.
 ### People — the budget is set by instance count, not by the model
 
 **A person's budget cannot be a vehicle's, and the whole difference is how many times it is drawn.**
-A bus appears a dozen times; a crowd is hundreds. At the vehicle allowance, 300 riders would cost
-1.2 M triangles of background detail against 48,000 for the entire fleet. So the count is decided
+A bus appears a dozen times; a crowd is hundreds. At the vehicle LOD0 allowance, 300 riders would cost
+1.8 M triangles of background detail against 54,000 for the entire fleet on screen. So the count is decided
 first and the model is derived from it — not the other way round.
 
 **How many exist is a choice, not an emergent number.** [demand-model.md](demand-model.md) §1: on-map
@@ -248,8 +382,10 @@ the shelter arrives before anyone stands in it. At 18.5 a 1600 px viewport spans
 3–8 stops are in frame: 8 × 24 = 192 < 240, and the global cap is headroom rather than the usual
 case. Over it, per-stop counts scale by `240/Σ`, floored at 1 for any stop with anyone waiting.
 
-The 48,000 map allowance is deliberately **exactly the fleet's** (15 × 4,000): the crowd may be a
-large geometry class but never outweighs the vehicles it is background to. The station allowance is
+The 48,000 map allowance is deliberately **just under the fleet's on screen** (60 buses × 900 LOD1 =
+54,000): the crowd may be a large geometry class but never outweighs the vehicles it is background
+to. That comparison used to be against authored file sizes (15 × 4,000) and is now against rendered
+triangles, which is the comparison that was always meant. The station allowance is
 1.5× that, affordable because the camera is at one stop and the city behind it is mostly culled.
 
 **So a person is ~600 triangles, and that is the constraint worth knowing before authoring.** Six
@@ -259,9 +395,9 @@ generates the 200-tri LOD1 (or uses a supplied `<name>_lod1` if present) and swi
 from the camera. **No impostor tier**: a billboard atlas is a texture, and pulling the 515 KB KTX2
 transcoder in for 4 px background dots is the worst trade in this file.
 
-**Bytes fall out of that.** Meshopt-encoded, the vehicle class runs ~11.5 B/tri (4,000 tris → 45 KB);
-600 + 200 tris at that rate is ~9 KB, so the cap is **12 KB** with headroom for the slot mask and
-node names. Four models = **48 KB**, ~5% of the 900 KB disk total — the cheapest class in the table,
+**Bytes fall out of that.** At the 11.5 B/tri planning rate (see the caveat above — it is a ceiling,
+not a measurement), 600 + 200 tris is ~9 KB, so the cap is **12 KB** with headroom for the slot mask
+and node names. Four models = **48 KB**, ~7% of the 720 KB disk total — the cheapest class in the table,
 because the expensive resource here was never the file.
 
 **Variation comes from the shader, because instancing means one mesh and one material.** The owner
@@ -303,6 +439,22 @@ owner supplies these:
   budget; uncompressed geometry → meshopt-encoded; PNG/JPG → KTX2; unused UV sets and vertex
   attributes stripped.
 - **Accepted with a warning:** > 8 materials, > 60 nodes, unnamed animation clips.
+
+**Vehicles add three of their own**, each protecting something above: any texture (livery is runtime
+material slots, so a texture is both unused and unbudgeted); a mesh tagged `Mk2_Add`/`Mk3_Add`
+without the base family present; and a supplied `<name>_lod1` above **1,200** tris, which defeats the
+density argument the LOD exists for. Longest bounding-box axis is expected in **6.0–19.0 m** — a
+midibus is ~8 m, an articulated bus ~18 m. The rejection message quotes the density arithmetic, not
+the budget:
+
+```
+vehicles/ev city bus.glb — 31,200 triangles, 2.9 MB (~93 B/tri).
+Budget 6,000 LOD0 (rejected above 12,000); byte cap 80 KB.
+On the map this bus is ~750 px, so 31,200 tris is 41 triangles per pixel —
+~165x quad overdraw, and 357 KB of the 720 KB the whole game gets for assets.
+Fix: reduce to ~6,000. The 900-tri map LOD is generated for you; strip the
+textures, livery comes from the Body/Stripe/Glass slots at runtime.
+```
 
 **People add three reject rules of their own**, because each is a thing instancing cannot survive:
 any texture at all (rejected outright, not auto-converted to KTX2); vertex colours present and not
