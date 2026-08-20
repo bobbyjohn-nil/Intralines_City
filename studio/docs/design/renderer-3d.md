@@ -154,6 +154,7 @@ first run into a download.
 | Depot (3 levels) | 3 | ≤ 6,000 | ≤ 60 KB |
 | Stop furniture (5 tiers) | 5 | ≤ 2,500 | ≤ 30 KB |
 | Building/landmark kit piece | 12 | ≤ 1,500 | ≤ 20 KB |
+| Person (3 poses + 1 spare) | 4 | ≤ 600 LOD0 / 200 LOD1 *(generated)* | ≤ 12 KB |
 | Shared texture atlas | 1 | — | 512×512 KTX2/ETC1S, ≤ 40 KB |
 
 **Pipeline infrastructure** — decoders/transcoders the above formats need at runtime, not model
@@ -173,6 +174,124 @@ Vehicles carry **no per-model texture** — livery is the company brand colour a
 applied at runtime to named material slots (`Body`, `Stripe`, `Glass`, `Light_L`, `Light_R`), so a
 growing fleet costs geometry only.
 
+### People — the budget is set by instance count, not by the model
+
+**A person's budget cannot be a vehicle's, and the whole difference is how many times it is drawn.**
+A bus appears a dozen times; a crowd is hundreds. At the vehicle allowance, 300 riders would cost
+1.2 M triangles of background detail against 48,000 for the entire fleet. So the count is decided
+first and the model is derived from it — not the other way round.
+
+**How many exist is a choice, not an emergent number.** [demand-model.md](demand-model.md) §1: on-map
+riders are *presentation sampled from rates, not the simulation*. Nothing downstream reads the render
+count — no fare, no satisfaction, no save field — so it is free to differ from the waiting count, and
+must, or a successful player builds themselves a framerate problem.
+
+**The mapping is compressive.** One shared predicate, `crowdShown(waiting, knee, cap)`, used by the
+map and the station view with different constants so they cannot drift:
+
+```
+shown(n) = n                                            for n ≤ knee
+shown(n) = knee + (cap − knee)·(1 − e^−(n − knee)/(cap − knee))   for n > knee
+```
+
+Chosen over a `sqrt` or a hard `min` because it is exactly identity at the bottom (two riders look
+like two riders), C¹ at the knee, monotonic, and asymptotic rather than clamped — there is no count
+at which its behaviour changes character.
+
+| Waiting | Map, per stop (knee 8, cap 24) | Station view (knee 24, cap 120) |
+|---|---|---|
+| 1 / 5 | 1 / 5 | 1 / 5 |
+| 20 | 16 | 20 |
+| 100 | 24 | 77 |
+| 500 | 24 | 119 |
+
+The station view gets the gentler curve because the crowd is the subject there, not background, and
+the counts that matter are the ones near capacity. `# tune` on all four constants.
+
+**§16 says the station crowd "mirrors the live waiting count" — read *mirrors* as reflects, not
+equals.** That is pillar 3 doing its job: the diorama shows the shape, the panel shows the exact
+number. The panel already carries the waiting figure; it is never contradicted, only not duplicated.
+
+**Overcrowding stays legible after the headcount saturates, because the signal moves off the
+headcount.** With `load = waiting / stopCapacity(tier)` (§9's predicate, not a second one) and
+`spillShare = 1 − 1/load` for load > 1 — 0.33 at 1.5×, 0.5 at 2×, 0.8 at 5×, bounded but never
+saturating:
+
+- **Position.** That share of agents stands *outside* the platform footprint, on a ring reaching
+  `min(6 m, 1.5·(load−1))` past its edge. Footprint keeps growing after count stops.
+- **Posture.** The same share swaps to the `walk` mesh and paces inside a 1.5 m radius at 0.4 m/s. A
+  milling crowd reads as an unhappy one, and costs nothing we are not already drawing.
+- **A flat ground decal** under the crowd in `--red` at `0.10 + 0.12·spillShare` alpha, cap 0.22 —
+  unlit world geometry per §2, so it keeps the palette exactly.
+- **Riders the sim sheds** walk away from the stop for 3 s, then fade. Departure is motion, and
+  motion survives count saturation.
+
+**No flicker.** `n` is an integer, so `shown` is a fixed value per `n`; compression alone means
+41↔42 waiting both render 22. Above that: the rendered count only *decreases* after the underlying
+value has been lower for 2 s, and agents enter and leave one at a time on a 400 ms stagger with a
+200 ms scale/opacity fade — never a whole-crowd pop.
+
+**Caps, and the arithmetic under them.**
+
+| | Map | Station view |
+|---|---|---|
+| Concurrent agents | **240** | **120** |
+| Per stop | 24 | — (one stop) |
+| Visible above | zoom **18.5** (a 1.7 m person = 3.9 px) | always |
+| Crowd triangle allowance | **48,000** | **72,000** |
+| ⇒ triangles per person | 48,000 / 240 = **200** (LOD1) | 72,000 / 120 = **600** (LOD0) |
+
+Zoom 18.5 is where a true-scale person first clears 4 px — riders get **no minimum-size floor** and
+none of §7.1's exaggeration, because a rider is scenery and a bus is a gameplay object; below the
+threshold they are culled outright, not shrunk. It is 1.5 steps above the zoom-17 furniture fade so
+the shelter arrives before anyone stands in it. At 18.5 a 1600 px viewport spans ~707 m of ground, so
+3–8 stops are in frame: 8 × 24 = 192 < 240, and the global cap is headroom rather than the usual
+case. Over it, per-stop counts scale by `240/Σ`, floored at 1 for any stop with anyone waiting.
+
+The 48,000 map allowance is deliberately **exactly the fleet's** (15 × 4,000): the crowd may be a
+large geometry class but never outweighs the vehicles it is background to. The station allowance is
+1.5× that, affordable because the camera is at one stop and the city behind it is mostly culled.
+
+**So a person is ~600 triangles, and that is the constraint worth knowing before authoring.** Six
+hundred triangles is a blocked-out figure — 6- or 8-sided limbs, a head, no fingers, no face, no
+separate hair shell, no folds. The owner authors **one mesh per pose at ≤ 600 tris**; the pipeline
+generates the 200-tri LOD1 (or uses a supplied `<name>_lod1` if present) and switches at **25 m**
+from the camera. **No impostor tier**: a billboard atlas is a texture, and pulling the 515 KB KTX2
+transcoder in for 4 px background dots is the worst trade in this file.
+
+**Bytes fall out of that.** Meshopt-encoded, the vehicle class runs ~11.5 B/tri (4,000 tris → 45 KB);
+600 + 200 tris at that rate is ~9 KB, so the cap is **12 KB** with headroom for the slot mask and
+node names. Four models = **48 KB**, ~5% of the 900 KB disk total — the cheapest class in the table,
+because the expensive resource here was never the file.
+
+**Variation comes from the shader, because instancing means one mesh and one material.** The owner
+authors five named material slots — `Skin`, `Top`, `Bottom` required, `Hair`, `Bag` optional — and
+the pipeline merges them into a single material, baking the slot index into a per-vertex byte. Per
+instance the renderer supplies: a packed `uvec4` of palette indices (skin 6 entries, top 12, bottom
+8, hair 6 — 3,456 combinations from one mesh), a uniform scale in **0.90–1.10** (real adult height
+spread, not caricature), a random yaw jitter of ±25° about the direction the bus comes from, and a
+`phase` in 0–1 driving a ±3° sway at 0.25 Hz. Four bytes and two floats per instance, no per-instance
+material, no second draw call.
+
+**What must not be baked in, and this is the half the owner cannot fix later:** no texture of any
+kind (a person carries none — a face at 10 px is noise), no UV0 required, no vertex colours (the
+pipeline owns `COLOR_0` for the slot mask), no baked AO (it fights §3's [0.75, 1.15] envelope), and
+no colour authored into the material itself — the slot's base colour is overwritten every instance.
+
+**Animation is out of scope for this category in v1: static poses plus positional movement.** Three
+meshes — `stand`, `walk`, `sit` (§16's shelter has a bench) — and an agent changing state moves
+between instance buffers. Riders walk at **1.39 m/s**, which is §14's own 12 min/km rather than a
+new number, so the on-screen walk and the sim's walk time cannot disagree. Life comes from the
+vertex shader: walkers get a ±1.5 cm bob at 1.9 Hz (stride rate at that speed) and a ±4° forward
+lean, both driven by `phase`. Boarding is a 200 ms fade-and-collapse at the door position, so it
+depends on nothing the bus model does.
+
+**Why not skinned glTF, plainly:** `InstancedMesh` does not skin, so hundreds of animated riders
+means vertex-animation textures — a float texture per clip, against a 600 KB transferred total, to
+animate something 4 px tall. The door it leaves open is the station view alone: 120 instances, one
+`walk` clip, ≤ 20 bones, revisited only if a playtest says the diorama looks dead. Rigs in supplied
+files are accepted and stripped with a warning; > 20 bones is rejected so that door stays open.
+
 **What happens when a supplied model misses, in three tiers** — actionable by a person, because the
 owner supplies these:
 
@@ -185,6 +304,12 @@ owner supplies these:
   attributes stripped.
 - **Accepted with a warning:** > 8 materials, > 60 nodes, unnamed animation clips.
 
+**People add three reject rules of their own**, because each is a thing instancing cannot survive:
+any texture at all (rejected outright, not auto-converted to KTX2); vertex colours present and not
+uniformly white (the pipeline owns `COLOR_0`); a skin with > 20 bones. Longest bounding-box axis is
+expected in **1.0–2.2 m** — a seated figure is ~1.3 m, a standing one ~1.75 m. A rig within 20 bones
+is *auto-fixed*: stripped, with a warning naming the clips lost.
+
 ---
 
 ## 5. Asset pipeline
@@ -196,6 +321,12 @@ owner supplies these:
    meshopt → KTX2), writes `public/assets/models/<category>/<name>.glb`, and generates
    `src/render/three/modelManifest.ts` (name → path, bytes, triangles, content hash). A test asserts
    every manifest entry is inside budget, so the budget cannot rot silently.
+   **`people` is a fifth category** alongside `vehicles`, `depots`, `stops`, `buildings`, and it is
+   the only one with extra pipeline stages: merge the five named slots into one material and bake the
+   slot index into `COLOR_0`; generate the 200-tri LOD1 into the same `.glb` as a second primitive;
+   strip any skin. The manifest gains `lod1Triangles` and `maxInstances` per category, and the
+   manifest test asserts **`maxInstances × lod1Triangles ≤ crowdTriangleAllowance`** — the crowd
+   budget is a product, so checking the per-model number alone would let the cap rot instead.
 4. **Served** from `assets/` next to `index.html`, same origin, no third-party fetch. Filenames are
    stable; the content hash lives in the manifest and drives the service-worker revision.
 5. **Precached** by extending `vite-plugin-pwa`'s `workbox.globPatterns` with
@@ -204,6 +335,19 @@ owner supplies these:
    not by checking a registration. The waiting-worker behaviour of DECISIONS #33 is unchanged.
 6. **Meshopt, not Draco** — the decoder is ~5 KB and bundles inline; Draco's fetches a wasm blob at
    runtime, which the offline constraint forbids.
+7. **A rejection is written to be acted on, not decoded.** Four parts, in order: the file and the
+   measured number, the budget it missed, *why that budget is what it is*, and the concrete next
+   move. The third part is the one that stops the same file coming back:
+
+   ```
+   people/commuter_a.glb — 3,180 triangles. Budget 600 (rejected above 1,200).
+   People are instanced up to 240 at once, so every triangle here is spent 240
+   times: 3,180 tris = 763,000 on screen, against 48,000 for the entire fleet.
+   Fix: decimate to ~600 — 6-sided limbs, no fingers, no face, no hair shell.
+   ```
+
+   The texture rejection says the same thing in its own terms: *"a person carries no texture; colour
+   comes from the `Skin`/`Top`/`Bottom` slots at runtime, one palette for the whole crowd."*
 
 ---
 
