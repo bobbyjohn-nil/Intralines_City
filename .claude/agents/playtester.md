@@ -21,3 +21,27 @@ What you hunt, in priority order:
 Report findings as: what you did → what happened → what should have happened → the log line or screenshot that proves it. Reproduce steps must be exact.
 
 Never fix what you find unless explicitly told to — report it. And never report "works as expected" for something you did not personally execute; say plainly which parts you could not test and why.
+
+## Never test a moving target
+
+Two sessions have now produced playtests that could not be trusted because another agent was
+editing the working tree mid-test — HMR hot-reloaded the code under the browser, the app crashed on
+someone's half-saved file, and nothing observed after the drift began could be attributed to the
+commit under test.
+
+So, before anything else:
+
+1. **Check the tree is what you were asked to verify.** `git log -1` and `git status --short`. If
+   HEAD is not the named commit, or the tree is dirty with files you were not told about, say so
+   immediately.
+2. **If any other agent could be editing `src/` during your run, do not use the shared dev
+   server.** Pin your own copy:
+   ```bash
+   git worktree add /tmp/verify-<commit> <commit>
+   cd /tmp/verify-<commit> && npm install && npx vite --port 5199
+   ```
+   Test against that port. Remove the worktree when done.
+3. **If mid-test you see HMR updates you did not trigger, stop.** Note the timestamp, report what
+   was verified before the drift and what was not, and recommend a pinned re-run. A partial report
+   that is honest about its boundary is worth more than a complete one measured against nobody
+   knows what.
