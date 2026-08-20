@@ -36,6 +36,7 @@ import {
 import { MeshoptDecoder, MeshoptEncoder, MeshoptSimplifier } from "meshoptimizer";
 
 import {
+  classProductViolations,
   EXPECTED_SIZE_METRES,
   HARD_CAP_FILE_BYTES,
   HARD_CAP_TEXTURE_DIMENSION,
@@ -72,6 +73,9 @@ function discoverFiles(): { category: ModelCategory; name: string; path: string 
       const full = join(dir, entry);
       if (!statSync(full).isFile()) continue;
       if (entry.startsWith(".")) continue;
+      // README.md lives inside people/ (intake guidance) same as the top-level one below — not a
+      // model, never treated as one.
+      if (entry === "README.md") continue;
       const dot = entry.lastIndexOf(".");
       const name = dot === -1 ? entry : entry.slice(0, dot);
       found.push({ category, name, path: full });
@@ -124,11 +128,87 @@ function hasCameras(doc: Document): boolean {
   return doc.getRoot().listNodes().some((node) => node.getCamera() !== null);
 }
 
+const WHITE_TOLERANCE = 0.02;
+
+/** §4 People reject rule: "vertex colours present and not uniformly white (the pipeline owns
+ * COLOR_0 for the slot mask)". Uniformly-white COLOR_0 is harmless noise and is left alone; the
+ * min/max normalized bounds are enough to prove uniformity without walking every vertex. */
+function findNonWhiteVertexColors(doc: Document): string | null {
+  const scene = doc.getRoot().listScenes()[0];
+  if (!scene) return null;
+  let found: string | null = null;
+  scene.traverse((node: GltfNode) => {
+    if (found) return;
+    const mesh = node.getMesh();
+    if (!mesh) return;
+    for (const prim of mesh.listPrimitives()) {
+      const color = prim.getAttribute("COLOR_0");
+      if (!color) continue;
+      const min = color.getMinNormalized([]);
+      const max = color.getMaxNormalized([]);
+      const isWhite = min.slice(0, 3).every((v) => Math.abs(v - 1) <= WHITE_TOLERANCE) && max.slice(0, 3).every((v) => Math.abs(v - 1) <= WHITE_TOLERANCE);
+      if (!isWhite) {
+        found = `vertex colours (COLOR_0) present and not uniformly white — min ${min.slice(0, 3).map((v) => v.toFixed(2)).join(",")}, max ${max.slice(0, 3).map((v) => v.toFixed(2)).join(",")}. The pipeline owns COLOR_0 for the per-instance palette slot mask; remove authored vertex colours before export.`;
+      }
+    }
+  });
+  return found;
+}
+
+/** Highest joint count across any skin in the file, or 0 if unrigged. */
+function maxSkinJointCount(doc: Document): number {
+  let max = 0;
+  for (const skin of doc.getRoot().listSkins()) {
+    max = Math.max(max, skin.listJoints().length);
+  }
+  return max;
+}
+
+/** §4 People: "Rigs in supplied files are accepted and stripped with a warning" — v1 riders are
+ * static poses (instancing cannot skin), so any rig within the bone budget is removed rather than
+ * shipped inert. Detaches every skin from its nodes and drops the JOINTS_0/WEIGHTS_0 attributes. */
+function stripRig(doc: Document): void {
+  for (const node of doc.getRoot().listNodes()) {
+    if (node.getSkin()) node.setSkin(null);
+  }
+  for (const skin of doc.getRoot().listSkins()) {
+    skin.dispose();
+  }
+  for (const mesh of doc.getRoot().listMeshes()) {
+    for (const prim of mesh.listPrimitives()) {
+      for (const semantic of ["JOINTS_0", "WEIGHTS_0"]) {
+        const attr = prim.getAttribute(semantic);
+        if (attr) prim.setAttribute(semantic, null);
+      }
+    }
+  }
+}
+
+/** §4: "the owner authors LOD0, the pipeline generates LOD1 (or uses a supplied `<name>_lod1` if
+ * present)" — a named node alongside the LOD0 hierarchy, the same convention as `Mk2_Add`. Returns
+ * its triangle count, or null if no such node exists. */
+function suppliedLod1Triangles(doc: Document, name: string): number | null {
+  const lod1Name = `${name}_lod1`;
+  for (const node of doc.getRoot().listNodes()) {
+    if (node.getName() !== lod1Name) continue;
+    const mesh = node.getMesh();
+    if (!mesh) return 0;
+    let total = 0;
+    for (const prim of mesh.listPrimitives()) {
+      total += getGLPrimitiveCount(prim);
+    }
+    return total;
+  }
+  return null;
+}
+
 interface ValidationResult {
   errors: string[];
   warnings: string[];
   info: string[];
   needsSimplifyToTriangles: number | null;
+  /** True if a within-budget skin was found and should be stripped before optimise(). */
+  needsRigStrip: boolean;
 }
 
 function validateSource(doc: Document, category: ModelCategory, name: string): ValidationResult {
@@ -137,6 +217,7 @@ function validateSource(doc: Document, category: ModelCategory, name: string): V
   const warnings: string[] = [];
   const info: string[] = [];
   let needsSimplifyToTriangles: number | null = null;
+  let needsRigStrip = false;
 
   // --- triangles ---
   const triangles = countTriangles(doc);
@@ -175,6 +256,14 @@ function validateSource(doc: Document, category: ModelCategory, name: string): V
       `${textures.length} texture(s) found on a vehicle model — renderer-3d.md §4: "vehicles carry no per-model texture", livery is a runtime recolour of named material slots. These textures will still be optimised, but consider re-exporting without them.`,
     );
   }
+  // §4 People reject rule: unlike every other category, a texture on a person is rejected
+  // outright, not converted to KTX2 — instancing means one shared material, and "a face at 10 px
+  // is noise". This is stricter than the generic per-texture checks above on purpose.
+  if (category === "people" && textures.length > 0) {
+    errors.push(
+      `${textures.length} texture(s) found — renderer-3d.md §4 People: "no texture of any kind (a person carries none — a face at 10 px is noise)". A person is drawn instanced with one shared material; variation comes from the per-instance palette (Skin/Top/Bottom/Hair/Bag slots), not a bake. Remove all textures and re-export.`,
+    );
+  }
 
   // --- material slots ---
   const materials = doc.getRoot().listMaterials();
@@ -189,6 +278,53 @@ function validateSource(doc: Document, category: ModelCategory, name: string): V
   }
   if (materials.length > WARN_MAX_MATERIALS) {
     warnings.push(`${materials.length} materials, more than the ${WARN_MAX_MATERIALS} advisory ceiling — accepted, but check whether they can merge.`);
+  }
+  if (budget.optionalMaterialSlots && budget.optionalMaterialSlots.length > 0) {
+    const present = budget.optionalMaterialSlots.filter((s) => materialNames.includes(s));
+    info.push(
+      `optional material slots (${budget.optionalMaterialSlots.join(", ")}): ${present.length > 0 ? `${present.join(", ")} present` : "none present"}`,
+    );
+  }
+
+  // --- vertex colours (people only: the pipeline owns COLOR_0 for the palette slot mask) ---
+  if (category === "people") {
+    const nonWhite = findNonWhiteVertexColors(doc);
+    if (nonWhite) errors.push(nonWhite);
+  }
+
+  // --- rig / skin (people only: §4 "a skin with > 20 bones" rejects; within budget, strip) ---
+  if (budget.maxBones !== undefined) {
+    const jointCount = maxSkinJointCount(doc);
+    if (jointCount > 0) {
+      if (jointCount > budget.maxBones) {
+        errors.push(
+          `skin with ${jointCount} bones — limit ${budget.maxBones} (renderer-3d.md §4 People: "> 20 bones is rejected"). Instancing cannot skin more than a handful of joints affordably; reduce the rig or strip it and export static poses instead.`,
+        );
+      } else {
+        info.push(`${jointCount}-bone skin found`);
+        warnings.push(
+          `${jointCount}-bone skin found and will be stripped — renderer-3d.md §4 People: "Animation is out of scope for this category in v1: static poses plus positional movement." The rig is accepted but removed; re-export static poses (stand/walk/sit) if animation wasn't intended, or note the clip names for the animator if it was.`,
+        );
+        needsRigStrip = true;
+      }
+    }
+  }
+
+  // --- LOD1 (owner-supplied `<name>_lod1`, or generation — see report) ---
+  if (budget.lod1MaxTriangles !== undefined) {
+    const lod1Triangles = suppliedLod1Triangles(doc, name);
+    if (lod1Triangles === null) {
+      warnings.push(
+        `no LOD1 supplied and the pipeline does not yet generate one (renderer-3d.md §4: "the owner authors LOD0, the pipeline generates LOD1"). Shipping LOD0 only for now — this model pays LOD0 triangle cost (${budget.maxTriangles.toLocaleString()} max) at every distance until LOD1 generation lands. Supply a "${name}_lod1" node (≤ ${budget.lod1MaxTriangles.toLocaleString()} tris) to opt out of that early.`,
+      );
+    } else {
+      info.push(`supplied LOD1 node "${name}_lod1": ${lod1Triangles.toLocaleString()} triangles (budget ${budget.lod1MaxTriangles.toLocaleString()})`);
+      if (lod1Triangles > budget.lod1MaxTriangles) {
+        warnings.push(
+          `supplied LOD1 is ${lod1Triangles.toLocaleString()} triangles, over the ${budget.lod1MaxTriangles.toLocaleString()} ceiling — accepted, but this weakens the density argument the LOD exists for; reduce it.`,
+        );
+      }
+    }
   }
 
   // --- nodes ---
@@ -268,7 +404,7 @@ function validateSource(doc: Document, category: ModelCategory, name: string): V
     }
   }
 
-  return { errors, warnings, info, needsSimplifyToTriangles };
+  return { errors, warnings, info, needsSimplifyToTriangles, needsRigStrip };
 }
 
 function findToktx(): boolean {
@@ -338,6 +474,19 @@ function ktx2Pass(glbBytes: Uint8Array<ArrayBufferLike>, label: string): Uint8Ar
 }
 
 async function main(): Promise<void> {
+  // §4 "Three assertions... Per class product, new": a config-level invariant, checked before any
+  // file is touched (it exists precisely to catch someone raising a per-model number in
+  // modelBudgets.ts without re-deriving the arithmetic, not to catch a bad supplied file).
+  const productViolations = classProductViolations();
+  if (productViolations.length > 0) {
+    console.error(`\n✗ model budget config is inconsistent (renderer-3d.md §4 "maxConcurrent × lod1Triangles ≤ classAllowance"):`);
+    for (const v of productViolations) {
+      console.error(`  ✗ ${v}`);
+    }
+    process.exitCode = 1;
+    return;
+  }
+
   const files = discoverFiles();
 
   if (files.length === 0) {
@@ -400,6 +549,10 @@ async function main(): Promise<void> {
       continue;
     }
 
+    if (validation.needsRigStrip) {
+      stripRig(doc);
+    }
+
     const trianglesBefore = countTriangles(doc);
     await optimise(doc, validation.needsSimplifyToTriangles, trianglesBefore);
     const trianglesAfter = countTriangles(doc);
@@ -453,6 +606,15 @@ async function main(): Promise<void> {
 
     info.push(`optimised: ${(bytes.byteLength / 1024).toFixed(1)} KB (was ${(sourceBytes / 1024).toFixed(1)} KB source)`);
 
+    // §4: "the 11.5 B/tri rate is not measured... npm run models must report measured bytes per
+    // triangle per file." The planning rate was `45 KB ÷ 4,000 tris` read backwards; this is the
+    // actual number, so the allowance can ratchet against evidence instead of arithmetic
+    // circularity.
+    if (trianglesAfter > 0) {
+      const bytesPerTriangle = bytes.byteLength / trianglesAfter;
+      info.push(`measured ${bytesPerTriangle.toFixed(1)} B/tri (planning rate assumed 11.5 — renderer-3d.md §4)`);
+    }
+
     const outDir = join(OUTPUT_DIR, file.category);
     mkdirSync(outDir, { recursive: true });
     const outPath = join(outDir, `${file.name}.glb`);
@@ -484,16 +646,26 @@ async function main(): Promise<void> {
   console.log(
     `assets/models total: ${(totalDisk / 1024).toFixed(1)} KB on disk (budget ${(TOTAL_BUDGET_DISK_BYTES / 1024).toFixed(0)} KB), ~${(totalGzip / 1024).toFixed(1)} KB gzipped (budget ${(TOTAL_BUDGET_TRANSFERRED_BYTES / 1024).toFixed(0)} KB).`,
   );
-  if (totalDisk > TOTAL_BUDGET_DISK_BYTES) {
-    console.error(`✗ total on-disk size exceeds the ${(TOTAL_BUDGET_DISK_BYTES / 1024).toFixed(0)} KB budget.`);
-  }
-  if (totalGzip > TOTAL_BUDGET_TRANSFERRED_BYTES) {
-    console.error(`✗ total gzip-transferred size exceeds the ${(TOTAL_BUDGET_TRANSFERRED_BYTES / 1024).toFixed(0)} KB budget.`);
+  const overTotalDisk = totalDisk > TOTAL_BUDGET_DISK_BYTES;
+  const overTotalGzip = totalGzip > TOTAL_BUDGET_TRANSFERRED_BYTES;
+  if (overTotalDisk || overTotalGzip) {
+    // §4 "Per total, new... failing the build with the ledger printed" — a per-file sum, so print
+    // the sum, worst offender first.
+    console.error(`\n✗ total shipped size exceeds budget — ledger (${manifest.length} model${manifest.length === 1 ? "" : "s"}, largest first):`);
+    const bySize = [...manifest].sort((a, b) => b.bytes - a.bytes);
+    for (const entry of bySize) {
+      console.error(`  ${(entry.bytes / 1024).toFixed(1).padStart(7)} KB  ${entry.category}/${entry.name}.glb`);
+    }
+    if (overTotalDisk) {
+      console.error(`✗ total on-disk size ${(totalDisk / 1024).toFixed(1)} KB exceeds the ${(TOTAL_BUDGET_DISK_BYTES / 1024).toFixed(0)} KB budget.`);
+    }
+    if (overTotalGzip) {
+      console.error(`✗ total gzip-transferred size ${(totalGzip / 1024).toFixed(1)} KB exceeds the ${(TOTAL_BUDGET_TRANSFERRED_BYTES / 1024).toFixed(0)} KB budget.`);
+    }
   }
 
   const anyRejected = reports.some((r) => !r.accepted);
-  const overTotalBudget = totalDisk > TOTAL_BUDGET_DISK_BYTES || totalGzip > TOTAL_BUDGET_TRANSFERRED_BYTES;
-  if (anyRejected || overTotalBudget) {
+  if (anyRejected || overTotalDisk || overTotalGzip) {
     process.exitCode = 1;
   }
 }

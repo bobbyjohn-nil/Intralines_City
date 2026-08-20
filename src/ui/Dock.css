@@ -79,9 +79,50 @@
   white-space: nowrap;
 }
 
+/* "Place depot" (manual §5) — the one dock entry with a pulse, because it's the only one gating
+   every other system. A slow ring rather than a scale/opacity flicker on the button itself: the
+   icon and label stay perfectly readable at every point in the cycle, only the ring around them
+   breathes, so it draws the eye without ever being hard to read mid-pulse. */
+.dock__btn--pulse {
+  position: relative;
+}
+
+.dock__btn--pulse::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: calc(var(--ui-radius) + 2px);
+  border: 1.5px solid var(--amber);
+  animation: dock-pulse-ring 1.8s ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes dock-pulse-ring {
+  0% {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+  70% {
+    opacity: 0;
+    transform: scale(1.18);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.18);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .dock__btn {
     transition: none;
+  }
+
+  /* Reduced motion keeps the pulse's *meaning* (a steady amber ring says "start here") without
+     the looping animation that triggers the preference in the first place. */
+  .dock__btn--pulse::after {
+    animation: none;
+    opacity: 0.9;
+    transform: none;
   }
 }
 

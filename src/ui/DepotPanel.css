@@ -1,0 +1,152 @@
+/**
+ * Styling for DepotPanel.tsx. Colors are the paper palette custom properties only — no hardcoded
+ * hex. `position: fixed`, anchored top-right below the top bar and inset from the map's out-of-
+ * bounds edge by `--ui-inset` (the same margin the top bar, dock, draft bar and notice already
+ * share, so this panel's edges line up with theirs) — opening it never resizes or reflows any of
+ * them. Spacing, type and radius come from tokens.css.
+ */
+
+@import './tokens.css';
+
+.depot-panel {
+  position: fixed;
+  top: calc(var(--ui-topbar-height) + var(--space-4));
+  right: var(--ui-inset);
+  z-index: var(--ui-z-chrome);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: min(20rem, 90vw);
+  padding: var(--space-4);
+  border: 1px solid var(--muted);
+  border-radius: var(--ui-radius);
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--ink) 12%, transparent);
+}
+
+.depot-panel__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.depot-panel__icon {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--ink);
+}
+
+.depot-panel__title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.depot-panel__name {
+  font-size: var(--ui-text-base);
+  font-weight: var(--ui-weight-semibold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.depot-panel__level {
+  color: var(--muted);
+  font-size: var(--ui-text-small);
+}
+
+.depot-panel__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  min-width: var(--ui-hit-target);
+  min-height: var(--ui-hit-target);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--muted);
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--ui-text-small);
+  cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.depot-panel__close:hover {
+  background: var(--paper);
+}
+
+.depot-panel__close:active {
+  transform: translateY(1px);
+}
+
+.depot-panel__close:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.depot-panel__stats {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--muted);
+}
+
+.depot-panel__stat {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.depot-panel__stat-label {
+  color: var(--muted);
+  font-size: var(--ui-text-small);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.depot-panel__stat-value {
+  color: var(--ink);
+  font-size: var(--ui-text-base);
+  font-weight: var(--ui-weight-semibold);
+  text-align: right;
+}
+
+.depot-panel__next {
+  margin: 0;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--muted);
+  font-size: var(--ui-text-small);
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+
+.depot-panel__next--is-ok {
+  color: var(--blue);
+}
+
+.depot-panel__next--is-blocked {
+  color: var(--red);
+}
+
+.depot-panel__next--is-capped {
+  color: var(--muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .depot-panel__close {
+    transition: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .depot-panel {
+    left: var(--ui-inset);
+    width: auto;
+  }
+}

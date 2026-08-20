@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { modelManifest } from "./modelManifest";
-import { HARD_CAP_FILE_BYTES, MODEL_BUDGETS, TOTAL_BUDGET_DISK_BYTES } from "./modelBudgets";
+import { classProductViolations, HARD_CAP_FILE_BYTES, MODEL_BUDGETS, TOTAL_BUDGET_DISK_BYTES } from "./modelBudgets";
 
 // renderer-3d.md §5: "A test asserts every manifest entry is inside budget, so the budget cannot
 // rot silently." This runs against whatever `npm run models` last generated, not against the
@@ -54,5 +54,13 @@ describe("modelManifest budget", () => {
     // only tracks models, so this is a lower bound on the real total, but it can never pass while
     // the models alone already blow the budget.
     expect(totalBytes).toBeLessThanOrEqual(TOTAL_BUDGET_DISK_BYTES);
+  });
+
+  // renderer-3d.md §4 "Three assertions... Per class product, new": maxConcurrent × lod1Triangles
+  // ≤ classAllowance, "so the on-screen cost cannot rot when someone raises a per-model number".
+  // Same predicate `npm run models` fails the build on (scripts/models/build.ts) — this is the
+  // independent check that catches a hand-edit to modelBudgets.ts the pipeline never re-ran over.
+  it("every class-product invariant holds (maxConcurrent × lod1Triangles ≤ classAllowance)", () => {
+    expect(classProductViolations()).toEqual([]);
   });
 });

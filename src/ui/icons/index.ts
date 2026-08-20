@@ -6,3 +6,6 @@
 
 export { Bus } from './Bus';
 export type { BusIconProps } from './Bus';
+
+export { Depot } from './Depot';
+export type { DepotIconProps } from './Depot';
