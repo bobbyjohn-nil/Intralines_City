@@ -64,8 +64,6 @@ first did.
 
 ## Stack
 
-| | |
-|---|---|
 Stated in the manual where marked; otherwise **[chosen]** — a default picked to fit the manual's
 evidence. Change any `[chosen]` row before implementation starts and the rest of the crew follows.
 
@@ -75,14 +73,14 @@ evidence. Change any `[chosen]` row before implementation starts and the rest of
 | Platform | Browser, offline-capable (service worker + IndexedDB) — *stated* |
 | Build tool | **[chosen]** Vite |
 | UI framework | **[chosen]** React — the manual says menus are "portaled outside the dock", which is React's idiom |
-| Rendering | **WebGL via three.js — decided 2026-08-12, "Route B".** The map, the vehicles and the buildings are real geometry with a movable camera. This **replaces** the Canvas 2D basemap, which was the whole renderer until now |
-| Model format | **glTF 2.0 binary (`.glb`)** — one file per model carrying geometry, materials and textures. **Not `.obj`, not `.fbx`.** Models are authored externally and supplied by the owner; assume the count grows |
+| Rendering | **WebGL via three.js — decided 2026-08-12, "Route B".** The map, the vehicles and the buildings are real geometry with a movable camera. This **replaces** the Canvas 2D basemap, and **retires the MapLibre vector-tile path** — offline is a hard constraint, and the tile renderer was the online-only half of a pair that no longer exists |
+| Model format | **glTF 2.0 binary (`.glb`) is what ships** — one file per model carrying geometry, materials and textures. `.fbx`, `.blend` and `.obj` are accepted **at the inbox and converted there**, never at build time: a conversion that runs every build is a conversion nobody has looked at. Models are authored externally; assume the count grows |
 | Asset delivery | A served `assets/` folder next to `index.html`. **The game is now a directory, not one file** — see the pillar note below |
 | Simulation | Web Worker, debounced ~250 ms on network change — *stated* |
 | Persistence | One save per city in `localStorage`; city packs (10–40 MB) in IndexedDB under a format version — *stated* |
 | Tests | **[chosen]** Vitest |
 | Data sources | TIGERweb block groups, ACS/LODES population and jobs, OpenStreetMap streets/water/parks/landuse, FHWA/BTS AADT traffic counts — *stated* |
-| Distribution | **TBD** |
+| Distribution | **[chosen]** A static directory — `index.html` plus hashed asset files — served from any host and cacheable by the service worker. Models ship as separate `.glb` files, never inlined: a base64 model is about a third larger and does not gzip. |
 
 ## Build & run
 
@@ -244,6 +242,37 @@ context and assert distances on those, under the lighting the game actually ship
 must say how, and the replacement must land in the same change that makes the old assertions
 meaningless. **Do not delete the old assertions before the new ones exist**, and do not leave both in
 a state where the old ones still gate CI while measuring nothing.
+
+## Imported 3D models
+
+Models are authored outside this repo and brought in. The inbox is
+[`studio/assets/incoming/`](assets/incoming/README.md) — drop a file there, say in one line what it
+is, and `modeler` checks scale, axis, origin, materials and triangle count, then places it. The inbox
+is not storage; processed files move into the game's asset directory.
+
+Four rules the crew holds imported models to, each one a thing that is cheap now and expensive later:
+
+- **`.glb` is what ships.** Other formats are accepted at the inbox and converted there. A conversion
+  that happens at build time, every build, is a conversion nobody has looked at.
+- **Git LFS is already active and `.glb`, `.fbx` and `.blend` are already tracked** — see
+  `.gitattributes`. Adding a new binary type means editing that file **before** the first file of that
+  type is committed. Retrofitting LFS means rewriting history, and until someone does, the file sits
+  at full size in the repo for ever.
+- **The renderer is never load-bearing for the simulation.** A model that failed to load changes what
+  you can see and nothing else — never a number, never a save, never a report card. The sim runs in a
+  Worker and does not know models exist.
+- **The city is playable before the models arrive.** The manual's own loading story is a staged
+  screen in front of a 10–40 MB pack, and that is the part of v1.18 worth beating rather than
+  reproducing. Models load after the map is interactive, and a bus with no model yet is a bus you
+  cannot see, not a screen you cannot use.
+
+**Every camera control needs a keyboard route, not only a mouse one.** The manual's own help text
+has to teach players to tilt the map — which is the tell that its best content sits behind a gesture.
+A view a player cannot reach without a drag is a view some players cannot reach at all.
+
+*(The lighting-versus-flat-colour point that belongs here is covered in full by "The contrast gate
+under Route B" above — arrived at independently by two sessions on the same day, which is reasonable
+evidence it is real.)*
 
 ## Audio
 
