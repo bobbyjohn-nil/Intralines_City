@@ -18,6 +18,8 @@ import { stopRadiusPx } from '../markerSizing';
 import type { Viewport } from '../projection';
 import { localOriginFromBounds, toLocalXZ, type LocalOrigin } from './localProjection';
 import { buildPolygonLayerMesh } from './polygonLayer';
+import { buildBuildingLayer } from './buildingLayer';
+import { report } from '../../game/errors/bus';
 import {
   buildRoadLayer,
   buildRouteRibbon,
@@ -35,15 +37,15 @@ import { buildNightTintLayer, setNightTint, type NightTintLayer } from './nightT
 import { createStopMarkerLayer, setStopRadiusPx, type StopMarkerLayer } from './stopMarkers';
 import { createLightingRig, updateKeyLightForClock, type LightingRig } from './lighting';
 import { createCamera, updateCameraRig } from './cameraRig';
-import { applyBusScale, busWorldScaleMultiplier, createBusInstance, placeBus, projectedLengthPx, type BusInstance } from './busLayer';
+import { applyBusScale, busWorldScaleMultiplier, createBusInstance, placeBus, projectedFootprintPx, type BusInstance } from './busLayer';
 import { IdPassRegistry, colorSwapTag, createIdRenderTarget, hideDuringPassTag, opaqueColorSwapTag } from './idPass';
 import { hexToUnitRgb, idColorToUnitRgb, rgbStringToUnitRgb } from './colorSpace';
-import { BUS_LENGTH_M, MASK_ALPHA, ROAD_COLOR_MIX, ROAD_DRAW_ORDER, WATER_ALPHA, PARK_ALPHA, PARK_COLOR_MIX_T } from '../style';
+import { MASK_ALPHA, ROAD_COLOR_MIX, ROAD_DRAW_ORDER, WATER_ALPHA, PARK_ALPHA, PARK_COLOR_MIX_T } from '../style';
 import { mixHex } from '../paperPalette';
 import type { LineBusSchedule } from '../schedules';
 import { busPositionAt, createBusPositionScratch } from '../../game/buses/position';
 import {
-  CAMERA_FOV_DEG,
+  ID_COLOR_BUILDING,
   ID_COLOR_BUS,
   ID_COLOR_MASK,
   ID_COLOR_ROAD_BASE,
@@ -82,6 +84,7 @@ export interface CityScene {
     readonly mask: THREE.Color;
     readonly water: THREE.Color;
     readonly park: THREE.Color;
+    readonly building: THREE.Color;
     readonly roadByClass: Map<string, THREE.Color>;
     routeByLine: Map<LineId, THREE.Color>;
     nextRouteIdIndex: number;
@@ -138,6 +141,25 @@ export function buildCityScene(city: City, palette: PaperPalette, aspect: number
   stopMarkers.points.position.y = Y_STOP;
   scene.add(stopMarkers.points);
 
+  // ── Buildings (lit, procedural prisms — renderer-3d.md §8 step 3; no assets) ─────────────────
+  // Degrade, do not fail (GAME.md): a malformed zone set (or anything else `buildBuildingLayer`
+  // doesn't expect) loses the city its buildings, never the city itself — reported through the one
+  // error bus rather than a bespoke failure path, `note` severity because nothing gameplay-facing
+  // is affected (no fare, no save, no report card reads this layer).
+  let buildingLayer: ReturnType<typeof buildBuildingLayer> = null;
+  try {
+    buildingLayer = buildBuildingLayer(city, origin, palette);
+    if (buildingLayer) scene.add(buildingLayer.mesh);
+  } catch (err) {
+    report({
+      severity: 'note',
+      source: 'render',
+      code: 'buildings-failed',
+      message: 'Buildings could not be generated for this city; the map still works.',
+      detail: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+    });
+  }
+
   // ── Buses (lit; pool grown as needed, never rebuilt per frame) ───────────
   const busGroup = new THREE.Group();
   scene.add(busGroup);
@@ -159,6 +181,28 @@ export function buildCityScene(city: City, palette: PaperPalette, aspect: number
   if (waterMesh) idRegistry.register(opaqueColorSwapTag(waterMesh.material as THREE.MeshBasicMaterial, waterIdColor));
   const parkIdColor = new THREE.Color(ID_COLOR_PARK);
   if (parkMesh) idRegistry.register(opaqueColorSwapTag(parkMesh.material as THREE.MeshBasicMaterial, parkIdColor));
+
+  // Buildings are lit (`MeshLambertMaterial`), unlike every other id-tagged layer above — a plain
+  // `.color` swap on a lit material would still get shaded by the light rig (dot(normal, lightDir)
+  // varies per face), producing a *non-uniform* id color across a building's own faces that
+  // `segmentByIdColor`'s exact-match tolerance would partially miss. Swapping the whole `.material`
+  // to a flat unlit one for the pass (same idiom as `busIdTag`'s body/outline swap, just done via
+  // material replacement instead of visibility toggling, since there's one `InstancedMesh` and no
+  // separate unlit proxy mesh to show/hide) avoids that entirely.
+  const buildingIdColor = new THREE.Color(ID_COLOR_BUILDING);
+  if (buildingLayer) {
+    const beautyMaterial = buildingLayer.mesh.material;
+    const idMaterial = new THREE.MeshBasicMaterial({ color: buildingIdColor });
+    idRegistry.register({
+      idColor: buildingIdColor,
+      apply() {
+        buildingLayer!.mesh.material = idMaterial;
+      },
+      restore() {
+        buildingLayer!.mesh.material = beautyMaterial;
+      },
+    });
+  }
 
   const roadByClass = new Map<string, THREE.Color>();
   ROAD_DRAW_ORDER.forEach((roadClass, index) => {
@@ -232,6 +276,7 @@ export function buildCityScene(city: City, palette: PaperPalette, aspect: number
       mask: maskIdColor,
       water: waterIdColor,
       park: parkIdColor,
+      building: buildingIdColor,
       roadByClass,
       routeByLine: new Map(),
       nextRouteIdIndex: 0,
@@ -412,6 +457,7 @@ export function updateBuses(
   cityScene: CityScene,
   schedules: readonly LineBusSchedule[],
   totalMinutes: number,
+  viewportWidthPx: number,
   viewportHeightPx: number,
   palette: PaperPalette,
 ): void {
@@ -443,8 +489,7 @@ export function updateBuses(
       const [x, z] = toLocalXZ(cityScene.origin, pos.lngLat);
       placeBus(instance, x, z, pos.bearing);
 
-      const distance = cityScene.camera.position.distanceTo(new THREE.Vector3(x, 0, z));
-      const projectedPx = projectedLengthPx(BUS_LENGTH_M, distance, CAMERA_FOV_DEG, viewportHeightPx);
+      const projectedPx = projectedFootprintPx(cityScene.camera, x, z, pos.bearing, viewportWidthPx, viewportHeightPx);
       applyBusScale(instance, busWorldScaleMultiplier(projectedPx));
     }
   }
@@ -463,6 +508,18 @@ export function updateBuses(
  * duration of the pass, restoring `--ink` after. The id pass's footprint is the outline's own
  * silhouette — slightly larger than the body's, matching "segment the whole vehicle" rather than
  * undercounting by the outline's own margin.
+ *
+ * **Also swaps `outlineMaterial.side` from `BackSide` to `DoubleSide` for the duration of the
+ * pass.** `BackSide` is what makes the beauty-pass "inverted hull" trick work (renderer-3d.md §7
+ * cause 2: with the real body drawn and depth-tested, only the sliver of outline poking past the
+ * body's own silhouette survives) — but that trick depends on the body being there to depth-test
+ * against. During the id pass the body is hidden (the two lines above), so nothing occupies the
+ * outline's interior in the depth buffer, and a `BackSide`-only box viewed at a steep, thin angle
+ * (a foreshortened bus once pitch is unlocked — or, it turns out, even at pitch 0 for a bus this
+ * thin at typical zoom) can rasterize as an unreliable sliver instead of its full silhouette on
+ * some GPUs/rasterizers (caught by the pitch-60 footprint gate, then found to already be marginal
+ * at pitch 0 too). `DoubleSide` for id-pass purposes only — measurement needs the true silhouette,
+ * not the beauty pass's visual ring effect.
  */
 function busIdTag(instance: BusInstance, idColor: THREE.Color, inkHex: string): import('./idPass').IdTag {
   const outlineMaterial = instance.outline.material as THREE.MeshBasicMaterial;
@@ -472,11 +529,13 @@ function busIdTag(instance: BusInstance, idColor: THREE.Color, inkHex: string): 
       instance.body.visible = false;
       instance.stripe.visible = false;
       outlineMaterial.color.copy(idColor);
+      outlineMaterial.side = THREE.DoubleSide;
     },
     restore() {
       instance.body.visible = true;
       instance.stripe.visible = true;
       outlineMaterial.color.set(inkHex);
+      outlineMaterial.side = THREE.BackSide;
     },
   };
 }

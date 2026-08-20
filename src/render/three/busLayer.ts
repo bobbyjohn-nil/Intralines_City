@@ -16,6 +16,18 @@
  * is a classic inverted-hull: a second, slightly larger, back-face-only copy of the same box in
  * flat `--ink`, rendered behind the real (lit) faces — cheap, per-object, and its scale inherits
  * the same world-scale multiplier so the ratio in the spec holds at every zoom.
+ *
+ * §7 cause 1, reopened by the step-2 camera unlock: `projectedLengthPx` measures true-world length
+ * at a distance as if the bus were always broadside to the camera — true by construction at
+ * step 1's locked pitch-0 (looking straight down, the bus's length axis is always perpendicular to
+ * the view direction, at any yaw), false the moment pitch is unlocked: a bus heading toward or away
+ * from a tilted camera foreshortens in screen space even though its distance is unchanged, and a
+ * scalar "length at this distance" estimate has no way to know that. `projectedFootprintPx` below
+ * replaces it for the actual scale decision — it projects the bus's real oriented bounding box (at
+ * true scale, before any exaggeration) through the camera itself and measures the on-screen extent
+ * that results, so foreshortening is measured, not assumed away. `projectedLengthPx` stays exported
+ * (still correct at its own stated job, still covered by its own regression test) but is no longer
+ * what sizes a bus.
  */
 
 import * as THREE from 'three';
@@ -99,4 +111,59 @@ const OUTLINE_PX_AT_TARGET_FOOTPRINT_RATIO = OUTLINE_PX_AT_TARGET_FOOTPRINT / BU
 export function placeBus(instance: BusInstance, x: number, z: number, bearingDeg: number): void {
   instance.group.position.set(x, Y_BUS_BASE, z);
   instance.group.rotation.y = -(bearingDeg * Math.PI) / 180;
+}
+
+// Scratch objects reused across every `projectedFootprintPx` call (renderer-3d.md/GAME.md: no
+// per-frame allocation) — this file's one THREE.js-dependent per-frame path.
+const footprintScratchMatrix = new THREE.Matrix4();
+const footprintScratchVector = new THREE.Vector3();
+const FOOTPRINT_CORNER_SIGNS: ReadonlyArray<readonly [number, number, number]> = [
+  [-1, 0, -1],
+  [1, 0, -1],
+  [-1, 0, 1],
+  [1, 0, 1],
+  [-1, 1, -1],
+  [1, 1, -1],
+  [-1, 1, 1],
+  [1, 1, 1],
+];
+
+/**
+ * The true-scale (unexaggerated) bus's actual on-screen bounding-box major axis, in CSS pixels, as
+ * `camera` really sees it — the projection-aware replacement for `projectedLengthPx` (see this
+ * module's own doc comment for why a scalar "length at distance" estimate stops being enough once
+ * pitch is unlocked). Projects all 8 corners of the true-size box at its real world position and
+ * heading through `camera`'s own projection matrix; the larger of the resulting screen-space width/
+ * height spans is the number `busWorldScaleMultiplier` should exaggerate against.
+ */
+export function projectedFootprintPx(
+  camera: THREE.Camera,
+  worldX: number,
+  worldZ: number,
+  bearingDeg: number,
+  viewportWidthPx: number,
+  viewportHeightPx: number,
+): number {
+  footprintScratchMatrix.makeRotationY(-(bearingDeg * Math.PI) / 180); // matches `placeBus`
+  footprintScratchMatrix.setPosition(worldX, Y_BUS_BASE, worldZ);
+
+  const halfLength = BUS_LENGTH_M / 2;
+  const halfWidth = BUS_WIDTH_M / 2;
+
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const [signX, signY, signZ] of FOOTPRINT_CORNER_SIGNS) {
+    footprintScratchVector.set(signX * halfWidth, signY * BUS_HEIGHT_M, signZ * halfLength);
+    footprintScratchVector.applyMatrix4(footprintScratchMatrix);
+    footprintScratchVector.project(camera);
+    const screenX = (footprintScratchVector.x * 0.5 + 0.5) * viewportWidthPx;
+    const screenY = (1 - (footprintScratchVector.y * 0.5 + 0.5)) * viewportHeightPx;
+    if (screenX < minX) minX = screenX;
+    if (screenX > maxX) maxX = screenX;
+    if (screenY < minY) minY = screenY;
+    if (screenY > maxY) maxY = screenY;
+  }
+  return Math.max(maxX - minX, maxY - minY);
 }

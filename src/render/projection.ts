@@ -26,22 +26,46 @@ export const REFERENCE_PIXELS_PER_METER = 0.1;
 export const MIN_ZOOM = 2;
 export const MAX_ZOOM = 22;
 
-/** Padding kept off the filling axis's edge in `fitToBounds`, so the dashed boundary on that side
+/**
+ * Padding kept off the filling axis's edge in `fitToBounds`, so the dashed boundary on that side
  * is never clipped flush against the canvas frame. The non-filling axis is not padded — it
  * overflows the viewport by design (see `fitToBounds`) and is reached by panning, not by fitting
- * it on-screen. TUNE */
-export const DEFAULT_FIT_PADDING_PX = 40;
+ * it on-screen.
+ *
+ * Resolution-*relative*, not a fixed pixel count (renderer-3d.md §1/§8 step 2 — the void-share
+ * budget at default framing is ≤2% of the frame, and a fixed-pixel padding can only ever meet that
+ * at one specific viewport size: the old `DEFAULT_FIT_PADDING_PX = 40` measured ~12-15% of a
+ * 640x360 test canvas, since two 40px strips are a *shrinking* fraction of area as the canvas grows
+ * and a *growing* one as it shrinks — see `contrast.rendered.test.ts`'s void-share cases, which
+ * this fraction is chosen to actually pass rather than merely document the gap). A fraction of the
+ * frame is a stable fraction of void at every viewport size, which a fixed pixel count structurally
+ * cannot be. TUNE
+ */
+export const FIT_PADDING_FRACTION = 0.015;
+
+/** `fitToBounds`'s default padding, in pixels, for a `width`x`height` viewport — `FIT_PADDING_
+ * FRACTION` of the *smaller* axis, so the padding (and the void it produces) never becomes the
+ * dominant term on an extreme aspect ratio. */
+export function defaultFitPaddingPx(width: number, height: number): number {
+  return FIT_PADDING_FRACTION * Math.min(width, height);
+}
 
 /**
  * The most empty void `clampToBounds` ever lets the viewport show beyond the city's edge, in
  * screen pixels — the player can pan until only this much grey mask is visible past the dashed
  * boundary, then no further; a hard stop with a little breathing room, not a hard stop flush
- * against the last pixel of paper. Chosen as a multiple of `DEFAULT_FIT_PADDING_PX`: comfortably
+ * against the last pixel of paper. Chosen as a multiple of `defaultFitPaddingPx`: comfortably
  * wider than the fit padding alone so the two don't read as the exact same edge, but still small
  * relative to a typical viewport, so it doesn't meaningfully eat into how far the player can pan
  * before hitting it. TUNE
  */
-export const PAN_CLAMP_MARGIN_PX = DEFAULT_FIT_PADDING_PX * 3;
+export const PAN_CLAMP_MARGIN_MULTIPLIER = 3;
+
+/** `clampToBounds`'s default margin, in pixels, for a `width`x`height` viewport — see
+ * `PAN_CLAMP_MARGIN_MULTIPLIER`. */
+export function defaultPanClampMarginPx(width: number, height: number): number {
+  return PAN_CLAMP_MARGIN_MULTIPLIER * defaultFitPaddingPx(width, height);
+}
 
 const DEG_TO_RAD = Math.PI / 180;
 
@@ -182,7 +206,7 @@ export class Viewport {
    * automatically right when a "show me the whole city" zoom-out needs it to, rather than fighting
    * it with a stale off-centre pan.
    */
-  clampToBounds(bounds: Bounds, marginPx: number = PAN_CLAMP_MARGIN_PX): void {
+  clampToBounds(bounds: Bounds, marginPx: number = defaultPanClampMarginPx(this.width, this.height)): void {
     const s = this.scale();
     const mLng = this.metersPerDegreeLng();
     const halfViewportLngDeg = this.width / 2 / s / mLng;
@@ -240,7 +264,7 @@ export class Viewport {
     bounds: Bounds,
     width: number,
     height: number,
-    paddingPx = DEFAULT_FIT_PADDING_PX,
+    paddingPx = defaultFitPaddingPx(width, height),
   ): Viewport {
     const centerLng = (bounds.west + bounds.east) / 2;
     const centerLat = (bounds.south + bounds.north) / 2;
@@ -263,4 +287,30 @@ const scratchScreen: ScreenPoint = { x: 0, y: 0 };
 
 export function lngLatToTuple(point: MutableLngLat): LngLat {
   return [point.lng, point.lat];
+}
+
+/** Fraction of the *smaller* viewport axis the city's larger axis spans at `zoomFloor` —
+ * renderer-3d.md §1: "the zoom at which the city's larger axis spans 0.70 of the smaller viewport
+ * axis." SPEC value. */
+export const ZOOM_FLOOR_FRACTION = 0.7;
+
+/**
+ * The camera's own zoom-out floor (renderer-3d.md §1's camera table: "Zoom | fit | `zoomFloor
+ * (city)` … 20") — the whole city fit into `ZOOM_FLOOR_FRACTION` of the smaller viewport axis, so
+ * "zoom out to see everything" is reachable but zooming out *further* than that (the old Canvas-era
+ * "428 px city in a 1317 px canvas" state) is not. Pure function of `bounds` and viewport size, same
+ * pxPerMeter -> zoom conversion `fitToBounds` uses, just against a fixed fraction of one axis
+ * instead of a "cover" fit against both — independently clamped to `[MIN_ZOOM, MAX_ZOOM]` so a
+ * pathologically tiny city (or viewport) can't push the floor outside the zoom range every other
+ * `Viewport` value already respects.
+ */
+export function zoomFloor(bounds: Bounds, width: number, height: number): number {
+  const centerLat = (bounds.south + bounds.north) / 2;
+  const mLng = METERS_PER_DEGREE_LAT * Math.cos(centerLat * DEG_TO_RAD);
+  const widthM = Math.max(1, (bounds.east - bounds.west) * mLng);
+  const heightM = Math.max(1, (bounds.north - bounds.south) * METERS_PER_DEGREE_LAT);
+  const largerAxisM = Math.max(widthM, heightM);
+  const smallerViewportPx = Math.max(1, Math.min(width, height));
+  const pxPerMeter = (smallerViewportPx * ZOOM_FLOOR_FRACTION) / largerAxisM;
+  return clamp(REFERENCE_ZOOM + Math.log2(pxPerMeter / REFERENCE_PIXELS_PER_METER), MIN_ZOOM, MAX_ZOOM);
 }

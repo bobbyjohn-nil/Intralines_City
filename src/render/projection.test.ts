@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DEFAULT_FIT_PADDING_PX,
+  defaultFitPaddingPx,
+  defaultPanClampMarginPx,
   MAX_ZOOM,
   METERS_PER_DEGREE_LAT,
   MIN_ZOOM,
-  PAN_CLAMP_MARGIN_PX,
   REFERENCE_PIXELS_PER_METER,
   REFERENCE_ZOOM,
   Viewport,
+  zoomFloor,
+  ZOOM_FLOOR_FRACTION,
 } from './projection';
 import type { MutableLngLat, ScreenPoint } from './projection';
 import type { Bounds } from '../game/types';
@@ -230,7 +232,7 @@ describe('fitToBounds', () => {
         // viewport axis — the defining trait of "cover" versus "contain": one dimension always
         // meets the (padded) viewport bound, never both falling short simultaneously the way a
         // contain fit's non-binding axis used to.
-        const largestAvailAxis = Math.max(width, height) - DEFAULT_FIT_PADDING_PX * 2;
+        const largestAvailAxis = Math.max(width, height) - defaultFitPaddingPx(width, height) * 2;
         expect(Math.max(fittedWidth, fittedHeight)).toBeCloseTo(largestAvailAxis, 1);
       });
     }
@@ -281,10 +283,11 @@ describe('clampToBounds', () => {
     expect(nw.y).toBeLessThan(viewport.height);
 
     // ...and specifically, the void this particular (positive, positive) drag pushed the city
-    // away from — its near (north-west) edge — must sit exactly `PAN_CLAMP_MARGIN_PX` inside the
-    // viewport, not have drifted arbitrarily further off toward the edge the drag was headed.
-    expect(nw.x).toBeCloseTo(PAN_CLAMP_MARGIN_PX, 2);
-    expect(nw.y).toBeCloseTo(PAN_CLAMP_MARGIN_PX, 2);
+    // away from — its near (north-west) edge — must sit exactly `defaultPanClampMarginPx` inside
+    // the viewport, not have drifted arbitrarily further off toward the edge the drag was headed.
+    const expectedMargin = defaultPanClampMarginPx(viewport.width, viewport.height);
+    expect(nw.x).toBeCloseTo(expectedMargin, 2);
+    expect(nw.y).toBeCloseTo(expectedMargin, 2);
   });
 
   it('does not fight the zoom-out escape: zooming toward MIN_ZOOM still reaches a whole-city view', () => {
@@ -318,5 +321,39 @@ describe('clampToBounds', () => {
 
     expect(viewport.centerLng).toBeCloseTo(cityCenterLng, 6);
     expect(viewport.centerLat).toBeCloseTo(cityCenterLat, 6);
+  });
+});
+
+describe('zoomFloor', () => {
+  it('is the zoom at which the larger city axis spans ZOOM_FLOOR_FRACTION of the smaller viewport axis', () => {
+    const bounds = squareBounds(41.6, 6400);
+    const width = 1317;
+    const height = 507;
+    const floor = zoomFloor(bounds, width, height);
+    const centerLng = (bounds.west + bounds.east) / 2;
+    const centerLat = (bounds.south + bounds.north) / 2;
+
+    const viewport = new Viewport(centerLng, centerLat, floor, width, height);
+    const nw: ScreenPoint = { x: 0, y: 0 };
+    const se: ScreenPoint = { x: 0, y: 0 };
+    viewport.project(bounds.west, bounds.north, nw);
+    viewport.project(bounds.east, bounds.south, se);
+
+    const largerFittedAxis = Math.max(se.x - nw.x, se.y - nw.y);
+    const smallerViewportAxis = Math.min(width, height);
+    expect(largerFittedAxis).toBeCloseTo(smallerViewportAxis * ZOOM_FLOOR_FRACTION, 1);
+  });
+
+  it('is comfortably below the default (fit) zoom, so zooming out from the default is real headroom', () => {
+    const bounds = squareBounds(41.6, 6400);
+    const width = 1317;
+    const height = 507;
+    const fitted = Viewport.fitToBounds(bounds, width, height);
+    expect(zoomFloor(bounds, width, height)).toBeLessThan(fitted.zoom);
+  });
+
+  it('never drops below MIN_ZOOM for a pathologically small city or viewport', () => {
+    const tinyBounds = squareBounds(41.6, 5);
+    expect(zoomFloor(tinyBounds, 1, 1)).toBeGreaterThanOrEqual(MIN_ZOOM);
   });
 });

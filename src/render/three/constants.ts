@@ -13,10 +13,40 @@
  * buildings (step 3+) parallax. SPEC. */
 export const CAMERA_FOV_DEG = 30;
 
-/** Step 1 build order (renderer-3d.md §8, step 1): "Camera pitch locked at 0°, no yaw." Camera
- * unlock (0°–60° pitch, free yaw) is step 2. SPEC-for-step-1. */
-export const CAMERA_PITCH_DEG = 0;
+/** Step 2 (renderer-3d.md §8, §1): default pitch/yaw the camera rig starts at and eases back to on
+ * `Home` — "Pitch (from nadir) | 35° | 0°-60°" / "Yaw | 0° (north up) | free 360°". `cameraRig.ts`
+ * still takes live pitch/yaw parameters every call; these are only the resting/default values. SPEC. */
+export const CAMERA_PITCH_DEG = 35;
 export const CAMERA_YAW_DEG = 0;
+
+/** Pitch range, degrees from nadir (0 = straight down). SPEC. */
+export const CAMERA_PITCH_MIN_DEG = 0;
+export const CAMERA_PITCH_MAX_DEG = 60;
+
+/** Top of the interactive zoom range — "zoom | fit | `zoomFloor(city)` … 20". SPEC. The floor is
+ * per-city (`projection.ts`'s `zoomFloor`), not a constant, because it depends on the city's own
+ * extent. */
+export const CAMERA_MAX_ZOOM = 20;
+
+// ── Keyboard camera control (renderer-3d.md §1's "Feel", GAME.md: "every camera control needs a
+// keyboard route, not only a mouse one") — continuous rates applied per held frame, not one-shot
+// per keydown, so a held key reads exactly like a drag. TUNE
+
+export const CAMERA_KEY_YAW_RATE_DEG_PER_S = 90;
+export const CAMERA_KEY_PITCH_RATE_DEG_PER_S = 60;
+/** Zoom levels/second — `Viewport.zoom` is already log2-scaled, so a constant rate here already
+ * reads as a constant *perceived* zoom speed at any starting zoom. TUNE */
+export const CAMERA_KEY_ZOOM_RATE_PER_S = 1.0;
+
+/** Mouse-drag orbit sensitivity (right-button drag): degrees of yaw/pitch per dragged pixel. TUNE */
+export const CAMERA_DRAG_YAW_DEG_PER_PX = 0.3;
+export const CAMERA_DRAG_PITCH_DEG_PER_PX = 0.25;
+
+/** `Home` (renderer-3d.md §1: "eases the camera to default framing over 400 ms (ease-out cubic)")
+ * and `N` (§1: "`N` snaps to north over 300 ms") transition durations. Both skipped (instant jump)
+ * under `prefers-reduced-motion`. SPEC. */
+export const CAMERA_HOME_EASE_MS = 400;
+export const CAMERA_NORTH_SNAP_EASE_MS = 300;
 
 // ── Layer elevations (renderer-3d.md §2) ──────────────────────────────────────
 // Real geometry on the ground plane, shaded flat. Small positive Y offsets only — enough that
@@ -68,6 +98,45 @@ export const BUS_MAX_EXAGGERATION = 8;
 export const OUTLINE_PX_AT_TARGET_FOOTPRINT = 1.5;
 export const STOP_OUTLINE_TARGET_FOOTPRINT_PX = 30;
 
+// ── Procedural buildings (renderer-3d.md §8 step 3) ───────────────────────────
+// Instanced extruded prisms built once from `Zone.residents/jobs/areaHa` — no assets. Lit geometry
+// (§2), so height is the only signal that needs to carry the demand model; footprint placement is
+// tuned to stay sparse and clear of every road, park and water polygon so the network drawn above
+// it is never the thing massing competes with (task: "they are context, and the network is the
+// subject"). `buildingLayer.ts` is the one consumer of every constant below.
+
+/** Grid spacing, in metres, for candidate building lots inside a zone's own polygon. TUNE */
+export const BUILDING_LOT_PITCH_M = 55;
+/** A lot's built footprint as a fraction of its pitch — the remainder is the gap between
+ * buildings, which is what keeps the massing reading as *blocks*, not a solid slab. TUNE */
+export const BUILDING_FOOTPRINT_FRACTION = 0.5;
+/** Fraction of candidate lots (after every placement filter passes) that actually get a building —
+ * deterministic per lot via a hash of the zone id and lot indices, not per-frame, not `Math.random`
+ * (same seed must always give the same city). TUNE */
+export const BUILDING_COVERAGE_FRACTION = 0.55;
+/** Extra clearance, in metres, a building footprint must keep beyond a road's own half-width —
+ * §2's "must not fight the map" as a hard placement rule: a building can never sit on a street, and
+ * since route ribbons run along the same road graph, never on a route either. TUNE */
+export const BUILDING_ROAD_SETBACK_M = 3;
+
+export const BUILDING_MIN_HEIGHT_M = 5;
+export const BUILDING_MAX_HEIGHT_M = 45;
+/** Weights on jobs/ha and residents/ha feeding the height curve below — jobs weighted higher so a
+ * job-heavy core (the demand model's own "downtown") produces visibly taller massing, per the task:
+ * "a job-heavy core producing taller massing is both free and correct." TUNE */
+export const BUILDING_HEIGHT_JOBS_WEIGHT = 1.6;
+export const BUILDING_HEIGHT_RESIDENTS_WEIGHT = 1.0;
+/** The per-hectare density score (`jobsPerHa * JOBS_WEIGHT + residentsPerHa * RESIDENTS_WEIGHT`)
+ * at which the saturating height curve (`1 - e^-(score/K)`) reaches ~63% of `MAX_HEIGHT_M` — a
+ * compressive curve so one extreme zone can't blow past the height ceiling while an ordinary zone
+ * still reads as multi-story, not flat. TUNE */
+export const BUILDING_HEIGHT_SATURATION_PER_HA = 20;
+/** Per-building height jitter (±fraction of the zone's own computed height) so a zone's skyline
+ * reads as varied lots, not a repeated extrusion. Deterministic, same hash idiom as coverage. TUNE */
+export const BUILDING_HEIGHT_JITTER = 0.12;
+
+export const Y_BUILDING_BASE = 0;
+
 // ── Lighting envelope (renderer-3d.md §3) ─────────────────────────────────────
 // "The luminance multiplier applied to any lit material's base colour stays within [0.75, 1.15] on
 // every surface normal at every clock minute." Buildings/vehicles/furniture only — never a data
@@ -110,6 +179,10 @@ export const ID_COLOR_STOP = 0x00ff00;
 export const ID_COLOR_MASK = 0xff00ff;
 export const ID_COLOR_PARK = 0x00ffff;
 export const ID_COLOR_WATER = 0xffff00;
+/** Distinct from every road-class id (fixed r=0x10) and route id (fixed r=0x40) — r=0x20 sits
+ * strictly between them and is never produced by either's per-class/per-line g-channel stepping,
+ * so segmentation can't confuse a building for a road or a route. */
+export const ID_COLOR_BUILDING = 0x200000;
 /** Road-class id colors are derived at runtime (`three/scene.ts`) — one per `ROAD_DRAW_ORDER`
  * entry, one per route ribbon, so no two classes collide. Both step sizes below are chosen well
  * clear of `segmentByIdColor`'s matching tolerance (± a handful of 8-bit units) — a 1-unit step (a

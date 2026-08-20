@@ -272,3 +272,34 @@ export const BUS_STRIPE_WIDTH_PX = 2;
  * at a glance — it is just no longer camouflage. TUNE
  */
 export const BUS_STRIPE_CONTRAST_MIX_T = 0.5;
+
+// ── Procedural buildings (renderer-3d.md §8 step 3) ──────────────────────────
+
+/**
+ * Blend factor from `--paper` (0) to `--muted` (1) for the flat base color every procedural
+ * building shares (one material, one `InstancedMesh`, one draw call — `buildingLayer.ts`).
+ * Deliberately its own axis: not `ROAD_COLOR_MIX`'s `ink`→`muted`, not any `LINE_COLOR_MIX_STOPS`
+ * entry, not `BUS_BODY_COLOR_MIX`'s `muted`→`amber` — so massing can never land on the same hue a
+ * road, a route or a bus already owns. This is lit geometry (renderer-3d.md §2), so the
+ * [0.75, 1.15] lighting envelope already adds real light/shadow contrast across a building's own
+ * faces — a low-chroma base color keeps that shading the *only* thing separating one building from
+ * the next, so the network drawn on top (unlit, full palette saturation) stays the obviously
+ * "louder" layer at a glance.
+ *
+ * **Raised from 0.35 to 0.7** (playtest fix — a drifting-tree lead confirmed by adding the pair
+ * the original tuning never checked: `contrast.rendered.test.ts`'s new bus-body/outline/route
+ * vs-building-wall cases). 0.35 measured only 20-51 RGB units from the bus body — worse than every
+ * other bus-vs-neighbour floor in the file (55-70) — because `--paper`→`--muted` is a warm-to-grey
+ * line that, under this scene's own warm key light (`#fff8e8`), still renders visibly warm at the
+ * low-t end, close enough to the bus's own warm tan (`mixHex(muted, amber, 0.65)`) under the same
+ * light. **The fix direction was found empirically, not by the RGB-only, unlit-corner reasoning a
+ * first pass at this comment used** — lit surfaces under a warm key light don't separate the way
+ * flat swatches would predict, so every candidate value was actually re-rendered and measured
+ * (`--use-gl=swiftshader`, the same pipeline the gate itself uses) rather than computed from the
+ * palette hexes alone. Measured across all 4 pitch/time-of-day states, worst case each: t=0.1 (the
+ * lightest, most "paper" option) only reaches 22-64; t=0.7 reaches 76-88 on bus-vs-building and
+ * 107+ / 118+ on the (already-comfortable) route/outline pairs; t=1.0 (pure `--muted`, rejected —
+ * collides with `ROAD_COLOR_MIX`'s own `living_street`, also pure `--muted`) reaches 128-141 but
+ * isn't worth the new road collision when 0.7 already clears every floor with margin. TUNE
+ */
+export const BUILDING_COLOR_MIX_T = 0.7;

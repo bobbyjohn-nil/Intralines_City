@@ -3,9 +3,10 @@
  * `d = (viewportHeightPx / 2) / (pxPerM · tan(FOV/2))`. So 'zoom' keeps meaning metres-per-pixel
  * *at the focus point*, and every number tuned against the Canvas renderer transfers unchanged."
  *
- * Step 1 (renderer-3d.md §8): pitch locked at 0°, yaw locked at 0° (north up, camera looks
- * straight down). Step 2 unlocks both — this module already takes pitch/yaw parameters so that
- * unlock is a camera-rig change only, not a rebuild of this math.
+ * Step 2 (renderer-3d.md §8): pitch 0°-60° from nadir (default 35°), free 360° yaw — this module
+ * took pitch/yaw parameters from the start (step 1 always passed the locked defaults through them),
+ * so the unlock is a caller change (`MapCanvas.tsx` now feeds it live state instead of the
+ * constants) rather than a rebuild of this math.
  */
 
 import * as THREE from 'three';
@@ -70,4 +71,10 @@ export function updateCameraRig(
     camera.aspect = aspect;
   }
   camera.updateProjectionMatrix();
+  // `camera.matrixWorld`/`matrixWorldInverse` are otherwise only refreshed inside
+  // `WebGLRenderer.render()` — anything that needs this frame's camera transform *before* the
+  // render call (the id-buffer pass, `busLayer.ts`'s `projectedFootprintPx`, `MapCanvas.tsx`'s
+  // pointer-pick raycast) would otherwise read last frame's pose. Forced here, once per camera
+  // update, rather than scattered `updateMatrixWorld()` calls at every call site.
+  camera.updateMatrixWorld(true);
 }
