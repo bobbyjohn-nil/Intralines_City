@@ -59,7 +59,10 @@ export function readPaperPalette(root: HTMLElement = document.documentElement): 
 
 const hexRgbCache = new Map<string, readonly [number, number, number]>();
 
-function hexToRgb(hex: string): readonly [number, number, number] {
+/** Exported for the WebGL scene's raw shaders (`three/*.ts`): they deliberately bypass
+ * `THREE.Color`'s automatic sRGB->linear working-space conversion (see `three/colorSpace.ts`'s
+ * module comment) and need this exact 0-255 parse to feed a uniform. */
+export function hexToRgb(hex: string): readonly [number, number, number] {
   const cached = hexRgbCache.get(hex);
   if (cached) return cached;
   let h = hex.trim();

@@ -113,6 +113,7 @@ export default defineConfig({
     }),
   ],
   test: {
+    name: "node",
     environment: "jsdom",
     // Vitest's `exclude` replaces its own defaults rather than merging with them, so we spread
     // `configDefaults.exclude` (node_modules, dist, .git, etc.) and add `.claude/**` on top. That
@@ -120,6 +121,12 @@ export default defineConfig({
     // `.claude/worktrees/<agent-id>/`, which are full copies of this repo — test files included.
     // Without this, vitest's default glob happily discovers and runs those copies too, double-
     // counting every test and running half the suite against another agent's in-progress code.
-    exclude: [...configDefaults.exclude, ".claude/**"],
+    //
+    // `*.rendered.test.ts` is excluded here on top of that: those are the `render` project's
+    // rendered-pixel contrast suite (vite.config.render.ts, vitest.workspace.ts) and need a real
+    // WebGL context — jsdom has none, so this project must never collect them (it would otherwise
+    // double-run every rendered test, once correctly in Chromium and once as a guaranteed jsdom
+    // failure — renderer-3d.md §3).
+    exclude: [...configDefaults.exclude, ".claude/**", "**/*.rendered.test.ts"],
   },
 });

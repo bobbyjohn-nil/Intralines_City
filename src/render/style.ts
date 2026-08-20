@@ -1,7 +1,10 @@
 /**
- * Tunable constants for the offline Canvas 2D basemap. All colors are *mixes* of the paper
- * palette read live from CSS custom properties (see `paperPalette.ts`) — nothing here is a hex
- * literal, so light/dark theming and any future palette edit apply automatically.
+ * Palette-derived tunable constants shared by the WebGL scene (`three/`) — colors, true-world
+ * sizes and pixel floors that are renderer-agnostic. All colors are *mixes* of the paper palette
+ * read live from CSS custom properties (see `paperPalette.ts`) — nothing here is a hex literal, so
+ * light/dark theming and any future palette edit apply automatically. Screen-space pixel sizing
+ * that is specific to the WebGL scene (the bus world-scale multiplier, the id-buffer outline, the
+ * camera) lives in `three/constants.ts` instead — see that file's module comment for the split.
  */
 
 import type { RoadClass } from '../game/types';
@@ -128,14 +131,10 @@ export const MASK_DASH_PATTERN: readonly number[] = [8, 6];
 /** Width of the dashed boundary stroke, in CSS pixels. TUNE */
 export const MASK_DASH_WIDTH_PX = 1.5;
 
-// ── Culling ──────────────────────────────────────────────────────────────────
-
-/** Extra screen-pixel margin kept around the viewport before geometry is culled. TUNE */
-export const CULL_MARGIN_PX = 64;
-
-// ── Gameplay overlays (drawCity.ts + drawOverlays.ts) ────────────────────────
+// ── Gameplay overlays ──────────────────────────────────────────────────────
 // Drawn after the basemap and time-of-day tint, before the out-of-bounds mask — see
-// `drawOverlays.ts`'s module comment for the full draw-order contract.
+// `renderer-3d.md`'s draw-order contract (carried over from the Canvas renderer, §7 "also carried
+// over").
 
 /** The palette color fields a line color may be mixed from. Kept separate from `PaperPalette`'s
  * own key list so this file doesn't need to import the interface just to name its keys. */
@@ -208,61 +207,15 @@ export const DRAFT_RUBBER_BAND_DASH_PATTERN: readonly number[] = [5, 4];
 export const DRAFT_RUBBER_BAND_WIDTH_PX = 2.5;
 
 /**
- * Bus marker true-world size in metres — roughly a standard 40 ft transit bus — rendered at
- * `viewport.scale()` the same way `routeWidthPx` renders `ROAD_WIDTH_M`, then clamped (see the
- * `BUS_MARKER_*_MIN_PX` / `_MAX_PX` pairs below) so it never disappears zoomed out and never
- * blobs zoomed in. TUNE
+ * Bus true-world size in metres — roughly a standard 40 ft transit bus. This is now the *only*
+ * bus-size constant in this file: the Canvas renderer's screen-pixel clamp pair
+ * (`BUS_MARKER_LENGTH/WIDTH_MIN/MAX_PX`) is superseded by the per-frame world-scale multiplier in
+ * `three/constants.ts` (renderer-3d.md §7, cause 1 — "a true-scale bus shrinks with distance and
+ * has no floor at all" is the *worse* version of the old bug, not a fixed one, so the fix is now a
+ * multiplier applied to the true-scale mesh rather than a screen-space clamp on a 2D marker). TUNE
  */
 export const BUS_LENGTH_M = 12;
 export const BUS_WIDTH_M = 2.6;
-
-/**
- * Bus marker length (nose-to-tail) clamps between these two screen-pixel bounds, same
- * "true-metres scaled, then clamped" idiom as `stopRadiusPx`. The floor is the number that
- * matters most: at typical play zooms (including the default fit-to-bounds view of a whole city,
- * measured at zoom 14.955) `BUS_LENGTH_M * viewport.scale()` is ~2.3px, so the floor is what
- * actually renders.
- *
- * Sixth playtest fix. The previous floor (18px) was sized only to beat the stop marker's ceiling
- * (`STOP_RADIUS_MAX_PX * 2` = 12px) — a real constraint, but not the one that matters in a transit
- * game: "is a bus technically bigger than a stop" is not the same question as "does a player
- * notice their vehicle at the zoom they plan at". The verdict named the marker a "fleck" even
- * though it passed every one of the earlier size/contrast/stroke regressions.
- *
- * 30px is chosen against two references a player actually reads the map by, not against the
- * stop marker: at the default zoom (14.955), a 140m city block renders at ~27.1px — the floor is
- * set to *slightly exceed one block* (30 / 27.1 ≈ 1.11x), so a bus reads as an object at the same
- * visual scale as the city grid itself, deliberately larger than its true 12m size (a ~13x
- * exaggeration at this zoom) the way a transit game draws its vehicles, not a mapping app drawing
- * true-to-scale geometry. Against the route it rides on (`routeWidthPx`, 6.25px at this zoom) the
- * ratio is 4.8x — see `ROUTE_WIDTH_MULTIPLIER`'s doc comment for why the route itself is kept
- * comparatively restrained. The ceiling (2x the floor, the same floor:ceiling ratio the previous
- * 18/36 pair used) keeps it from becoming a blob once zoomed in far enough for the true-scale size
- * to exceed it — see `busMarkerLengthPx`'s crossover math in `drawOverlays.test.ts` for exactly
- * where that handoff lands (~zoom 18.6, well into street-level zoom, ~3.7 zoom levels above the
- * default). TUNE
- */
-export const BUS_MARKER_LENGTH_MIN_PX = 30;
-export const BUS_MARKER_LENGTH_MAX_PX = 60;
-
-/**
- * Bus marker width clamps, same idiom as `BUS_MARKER_LENGTH_MIN_PX` / `_MAX_PX` above.
- *
- * Not derived from the length floor by a fixed aspect ratio this time — it is sized directly
- * against `routeWidthPx`, because that is the comparison that actually broke in the sixth
- * playtest's underlying bug report: `ROAD_MIN_WIDTH_PX.motorway` (hence `routeWidthPx`) stops
- * being floor-governed and starts growing with true motorway scale at zoom ≈15.185, just 0.23
- * zoom levels above the real default zoom (14.955) — see `drawOverlays.test.ts`'s
- * `TYPICAL_PLAY_ZOOMS` comment for the full regression this constant now has to survive. Past that
- * crossover the route keeps growing while the bus (still floor-governed) does not, so the "bus
- * clearly wider than its route" guarantee is only as strong as how far past that crossover the
- * width floor keeps winning. 18px keeps the ratio above `MIN_BUS_TO_ROUTE_WIDTH_RATIO` (1.5) until
- * zoom ≈16.13 — about 1.2 zoom levels of headroom past the *default* zoom, roughly five times the
- * previous margin — while still comparing sensibly to the length floor (18/30 ≈ 0.6, a visibly
- * elongated triangle, not a stub). TUNE
- */
-export const BUS_MARKER_WIDTH_MIN_PX = 18;
-export const BUS_MARKER_WIDTH_MAX_PX = 36;
 
 /**
  * Blend factor from `--muted` (0) to `--amber` (1) for the bus "company brand color" (per
@@ -319,18 +272,3 @@ export const BUS_STRIPE_WIDTH_PX = 2;
  * at a glance — it is just no longer camouflage. TUNE
  */
 export const BUS_STRIPE_CONTRAST_MIX_T = 0.5;
-
-/**
- * Bus marker outline stroke width, as a fraction of `busMarkerWidthPx(viewport)` — the marker's own
- * zoom-scaled width, not a fixed screen-pixel value. This is the same lesson the original
- * `BUS_MARKER_*_MIN_PX`/`_MAX_PX` sizing fix already encoded (a fixed-pixel marker vanished at the
- * default fit-to-bounds zoom): a fixed-pixel stroke would do the same thing in miniature, staying
- * visually heavy when the marker is at its `_MAX_PX` ceiling and disappearing to a hairline (or
- * over-dominating a tiny triangle) when it's at its `_MIN_PX` floor. Deriving it from `widthPx`
- * instead means it inherits the same clamp-then-scale response for free. At the width floor
- * (`BUS_MARKER_WIDTH_MIN_PX`, 18px) this is 3.6px; at the ceiling (`BUS_MARKER_WIDTH_MAX_PX`, 36px)
- * it's 7.2px — always a clearly visible ring around the fill, following `drawStops`'s established
- * fill-plus-stroke idiom (`STOP_OUTLINE_WIDTH_PX`) rather than inventing a new treatment; stroked in
- * `--ink`, same color `drawStops` already strokes with. TUNE
- */
-export const BUS_STROKE_WIDTH_RATIO = 0.2;

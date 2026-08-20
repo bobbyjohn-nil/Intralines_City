@@ -29,6 +29,10 @@ public/assets/
 # Test output
 coverage/
 
+# vitest browser mode's failure screenshots (src/render/three/*.rendered.test.ts) — regenerated
+# per run, never meaningful to diff or commit.
+src/render/three/__screenshots__/
+
 # Local state — never commit
 .env
 .env.local

@@ -30,7 +30,7 @@ import {
   type SaveStorage,
 } from './game/save';
 import { MapCanvas } from './render/MapCanvas';
-import type { LineBusSchedule } from './render/drawOverlays';
+import type { LineBusSchedule } from './render/schedules';
 import { TopBar } from './ui/TopBar';
 import { Dock, type Tool } from './ui/Dock';
 import { DraftBar } from './ui/DraftBar';
