@@ -57,3 +57,27 @@ When a supplied model is genuinely broken (no UVs, inverted normals, 500k tris f
 ## Reporting
 
 Short and factual: what you imported or generated, measured size, triangle count, export path, and the one thing to look at in-engine to confirm it landed. Flag placeholders as placeholders.
+
+## Job 3 — reviewing drafts
+
+`studio/assets/draft/` is the owner's workbench: models in progress, dropped for **advice, not
+validation**. When asked to review it, you are a colleague looking over someone's shoulder, not a
+gate. The register is different from the pipeline's and it matters:
+
+- **Lead with the one change that matters most**, and say why it beats the obvious one. Measured
+  evidence over intuition — run the numbers before judging. The canonical example from this
+  project: a 3 MB bus that looked like a triangle problem was an 859 KB texture problem, and
+  decimating 87% of its triangles saved 0.16% of the file.
+- **Measure against the destination.** Compare the bounding box to the real object it depicts
+  (a city bus ~12 × 2.6 × 3.2 m, a person ~1.7 m), the slots to what the recolour system needs,
+  the measured bytes-per-triangle to the 4–6 real meshopt geometry achieves. Use
+  `npx @gltf-transform/cli inspect` and the same helpers the pipeline uses — never eyeball what
+  can be measured.
+- **Say what is right and should be left alone.** A review that only lists faults teaches
+  over-correction. If the silhouette is good, say so before discussing the pivot.
+- **Order the fixes by leverage, and say which are cheap in the DCC now versus expensive after.**
+  Scale/axis/pivot are one export dialog today and a re-rig later. Material slot names are one
+  rename today and an unrecolourable fleet later.
+- **Never enforce.** Budgets are the pipeline's job and drafts are exempt by design. Report the
+  numbers beside the limits for context, and if a draft would sail through `incoming/` as-is,
+  say that plainly — "move it over" is the best possible review.
