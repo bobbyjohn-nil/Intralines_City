@@ -24,16 +24,23 @@ import {
   type LoadResult,
   type SaveCompany,
   type SaveData,
+  type SavedDepot,
   type SavedLine,
   type SavedStop,
   type SaveEnvelope,
   type SaveStorage,
 } from './game/save';
+import { placeDepot } from './game/depots/placement';
+import { canArmDepotTool } from './game/depots/economics';
+import { isDepotSitable, type DepotSitingResult } from './game/depots/siting';
+import type { Depot, DepotLevel } from './game/depots/types';
 import { MapCanvas } from './render/MapCanvas';
 import type { LineBusSchedule } from './render/schedules';
 import { TopBar } from './ui/TopBar';
 import { Dock, type Tool } from './ui/Dock';
 import { DraftBar } from './ui/DraftBar';
+import { DepotCursorChip } from './ui/DepotCursorChip';
+import { depotArmRefusalMessage, depotSiteMessage } from './ui/depotCopy';
 import { Notice } from './ui/Notice';
 import { UpdateBanner } from './ui/UpdateBanner';
 import { useServiceWorkerUpdate } from './pwa/useServiceWorkerUpdate';
@@ -83,6 +90,16 @@ const AUTOSAVE_FLOOR_MS = 10000;
 /** Display-only (save-format.md §1: "never branched on") — no release pipeline sets this yet. # tune */
 const GAME_VERSION = '0.1.0-dev';
 
+// ── Depots (studio/docs/design/depots-and-timetables.md) ────────────────────────────────────
+
+/** `DepotCursorChip`'s own doc comment: "the ≤ 20 Hz budget the spec asks for... is entirely the
+ * wiring layer's to enforce" — this is that budget. A leading-edge rate gate, not a queued
+ * debounce: pointermove fires far faster than this, so gating in real time means `isDepotSitable`
+ * always runs against whatever cursor position is current once the gate reopens — nothing stale
+ * is ever queued up and replayed later. SPEC ("≤ 20 Hz") */
+const DEPOT_SITE_CHECK_HZ = 20;
+const DEPOT_SITE_CHECK_INTERVAL_MS = 1000 / DEPOT_SITE_CHECK_HZ;
+
 /** GAME.md palette `--blue`. `SaveCompany.brandColor` has no picker UI yet, so every fresh
  * company starts on the same placeholder — matches `game/save/read.ts`'s own default so a hand
  * edited or pre-UI save reads the same color either way. # tune */
@@ -100,6 +117,7 @@ const DEFAULT_SAVED_HEADWAY_MINUTES = 10;
 interface RebuiltFromSave {
   readonly stops: readonly Stop[];
   readonly lines: readonly Line[];
+  readonly depots: readonly Depot[];
   readonly orphanedStopNames: readonly string[];
   readonly droppedLineNames: readonly string[];
 }
@@ -160,6 +178,44 @@ function rebuildLine(saved: SavedLine, stopsById: ReadonlyMap<StopId, Stop>, gra
   return { id: saved.id, name: saved.name, stopIds: routable.map((s) => s.id), legs, totalLengthM };
 }
 
+/** `SavedDepot.level` is a plain `number` (read.ts defends against a hand-edited or damaged
+ * file); clamps it back onto `DepotLevel`'s three real values rather than trusting the file. */
+function toDepotLevel(level: number): DepotLevel {
+  if (level === 2) return 2;
+  if (level === 3) return 3;
+  return 1;
+}
+
+/**
+ * Re-sites one saved depot's `accessNodeId` against the *current* road graph — the same
+ * re-anchor idea `reanchorStop` applies to a stop, run through the same `isDepotSitable` this
+ * file's own placement flow calls below, per GAME.md's "one shared predicate per rule". Riverton
+ * regenerates from a fixed seed (`RIVERTON_SEED`), so this only fails for a hand-edited save
+ * naming a position outside today's city — logged loud, never thrown; the depot is kept with its
+ * access node unresolved rather than dropped (save-format.md §5.3: "never delete").
+ *
+ * `SavedDepot` carries no name field — no depot-naming UI exists yet (`save/types.ts`'s own
+ * shape) — so the name is regenerated from placement order, the same "Depot N" scheme
+ * `handlePlaceDepotClick` mints from below, rather than round-tripping a name the file never
+ * actually stored.
+ */
+function rebuildDepot(saved: SavedDepot, index: number, city: City, rebuiltSoFar: readonly Depot[]): Depot {
+  const site = isDepotSitable(saved.position, city, rebuiltSoFar);
+  if (!site.ok) {
+    console.error(
+      `load: depot #${saved.id} could not be re-sited on the current graph (${site.reason}) — access node left unresolved`
+    );
+  }
+  return {
+    id: saved.id,
+    name: `Depot ${index + 1}`,
+    position: saved.position,
+    level: toDepotLevel(saved.level),
+    accessNodeId: site.ok ? site.accessNodeId : 0,
+    busesParked: 0,
+  };
+}
+
 /** `LoadSaveInput.rebuildDerived` (save-format.md §1 step 8): re-anchor every stop, re-route every
  * line, and never throw for a damaged-but-recoverable network — an orphan or a dropped line is
  * reported, not a load failure (§5.3). */
@@ -182,7 +238,12 @@ function makeRebuildDerived(city: City): (data: SaveData, envelope: SaveEnvelope
       lines.push(rebuilt);
     }
 
-    return { stops, lines, orphanedStopNames, droppedLineNames };
+    const depots: Depot[] = [];
+    data.depots.forEach((savedDepot, index) => {
+      depots.push(rebuildDepot(savedDepot, index, city, depots));
+    });
+
+    return { stops, lines, depots, orphanedStopNames, droppedLineNames };
   };
 }
 
@@ -216,6 +277,14 @@ function toSavedStop(stop: Stop): SavedStop {
   };
 }
 
+/** `addons` is always empty — the Workshop/Wash bay/Chargers add-ons (§2) aren't built at all,
+ * per `economics.ts`'s own scope note, so there is nothing yet to persist there. Name is
+ * deliberately dropped: `SavedDepot` has no field for it (see `rebuildDepot`'s comment on the way
+ * back in). */
+function toSavedDepot(depot: Depot): SavedDepot {
+  return { id: depot.id, position: depot.position, level: depot.level, addons: [] };
+}
+
 function toSavedLine(line: Line): SavedLine {
   return {
     id: line.id,
@@ -237,8 +306,10 @@ interface AutosaveSnapshot {
   readonly speedIndex: number;
   readonly lines: readonly Line[];
   readonly stops: readonly Stop[];
+  readonly depots: readonly Depot[];
   readonly nextStopId: StopId;
   readonly nextLineId: LineId;
+  readonly nextDepotId: DepotId;
   readonly companyName: string;
 }
 
@@ -250,10 +321,10 @@ function buildSaveData(snapshot: AutosaveSnapshot, company: SaveCompany, citySee
     city: { seed: citySeed, packFormat: 0, packBuild: '', packHash: '' },
     stops: snapshot.stops.map(toSavedStop),
     lines: snapshot.lines.map(toSavedLine),
-    depots: [],
+    depots: snapshot.depots.map(toSavedDepot),
     buses: [],
     treasury: snapshot.treasury,
-    nextIds: { stop: snapshot.nextStopId, line: snapshot.nextLineId, bus: FIRST_BUS_ID, depot: FIRST_DEPOT_ID },
+    nextIds: { stop: snapshot.nextStopId, line: snapshot.nextLineId, bus: FIRST_BUS_ID, depot: snapshot.nextDepotId },
   };
 }
 
@@ -320,7 +391,26 @@ export function App() {
   const [stops, setStops] = useState<readonly Stop[]>(() => bootLoad.outcome === 'ok' ? bootLoad.derived.stops : []);
   const [nextStopId, setNextStopId] = useState<StopId>(() => bootData?.nextIds.stop ?? FIRST_STOP_ID);
   const [nextLineId, setNextLineId] = useState<LineId>(() => bootData?.nextIds.line ?? FIRST_LINE_ID);
+  // Depots (depots-and-timetables.md §1) — same top-level-collection-plus-live-counter idiom as
+  // `stops`/`nextStopId` above. Placing a depot does not yet change where a line's buses spawn:
+  // `BUSES_PER_NEW_LINE` above still hands every new line a token service, and nothing here reaches
+  // into `deadhead.ts`'s `allocateNearestDepot` to route a line's buses to their nearest depot with
+  // free parking — that wiring is the Fleet panel's, not this pass's.
+  const [depots, setDepots] = useState<readonly Depot[]>(() => (bootLoad.outcome === 'ok' ? bootLoad.derived.depots : []));
+  const [nextDepotId, setNextDepotId] = useState<DepotId>(() => bootData?.nextIds.depot ?? FIRST_DEPOT_ID);
   const [hoverLngLat, setHoverLngLat] = useState<LngLat | undefined>(undefined);
+  // Mirrors `hoverLngLat` for the depot pointermove throttle below, which reads the *latest* hover
+  // position off a ref rather than closing over stale render-time state (the throttle's whole
+  // reason to exist is decoupling "how often the pointer moves" from "how often we act on it").
+  const hoverLngLatRef = useRef<LngLat | undefined>(hoverLngLat);
+  hoverLngLatRef.current = hoverLngLat;
+  // The latest `isDepotSitable` result for the pointer's current position, and where to draw the
+  // chip — both owned and throttled here (DepotCursorChip's own doc comment: "entirely the wiring
+  // layer's to enforce"), `null` whenever the tool isn't armed or the pointer hasn't reported in.
+  const [depotSite, setDepotSite] = useState<DepotSitingResult | null>(null);
+  const [depotCursorPos, setDepotCursorPos] = useState<{ readonly x: number; readonly y: number } | null>(null);
+  const mapContainerRef = useRef<HTMLElement | null>(null);
+  const depotThrottleRef = useRef(0);
   const [notice, setNotice] = useState<string | null>(null);
 
   // Company identity a founding flow would normally collect; nothing here changes it once loaded
@@ -465,8 +555,10 @@ export function App() {
     speedIndex: clock.speedIndex,
     lines,
     stops,
+    depots,
     nextStopId,
     nextLineId,
+    nextDepotId,
     companyName: companyNameRef.current,
   });
   latestSnapshotRef.current = {
@@ -475,8 +567,10 @@ export function App() {
     speedIndex: clock.speedIndex,
     lines,
     stops,
+    depots,
     nextStopId,
     nextLineId,
+    nextDepotId,
     companyName: companyNameRef.current,
   };
 
@@ -540,6 +634,18 @@ export function App() {
     performAutosave();
   }, [lines, performAutosave]);
 
+  // Placing a depot is a meaningful action too (manual §19) — same immediate-write-plus-skip-first
+  // pattern as the lines effect just above, for the same reason: a loaded save's depots must not
+  // immediately re-trigger the write it was just read from.
+  const skipNextDepotsAutosaveRef = useRef(true);
+  useEffect(() => {
+    if (skipNextDepotsAutosaveRef.current) {
+      skipNextDepotsAutosaveRef.current = false;
+      return;
+    }
+    performAutosave();
+  }, [depots, performAutosave]);
+
   // Best-effort immediate write on the way out — the debounce/floor above cover continuous play,
   // this covers the tab closing before either fires.
   useEffect(() => {
@@ -560,14 +666,94 @@ export function App() {
 
   const beginDraft = useCallback(
     (next: Tool) => {
+      if (next === 'place-depot') {
+        // Row 0 of the §1 check table (depot cap + cash), evaluated once here — "the tool won't
+        // arm" — not per cursor position; `depotCopy.ts`'s own doc comment makes the same point.
+        // A refusal never touches `tool`/`draft`, so reaching for a tool that can't arm is a no-op
+        // plus a `Notice`, not a half-switched UI.
+        const cashUsd = treasury.cashCents / CENTS_PER_USD;
+        const arm = canArmDepotTool(depots.length, cashUsd);
+        if (!arm.ok) {
+          setNotice(depotArmRefusalMessage(arm));
+          return;
+        }
+      }
       setTool(next);
       setDraft(next === 'draw-line' ? startDraft(city.graph, nextStopId) : null);
     },
-    [city.graph, nextStopId]
+    [city.graph, nextStopId, treasury, depots.length]
   );
+
+  // ── Depots (depots-and-timetables.md §1) ────────────────────────────────────
+
+  const handlePlaceDepotClick = useCallback(
+    (lngLat: LngLat) => {
+      // `placeDepot` runs the arm gate, the §1 rows 1-4 siting check, and the spend in one call —
+      // money and placement succeed or fail together by construction (placement.ts's own doc
+      // comment), the same atomicity `handleMapClick`'s stop-placement charge keeps by hand below.
+      const result = placeDepot(lngLat, `Depot ${depots.length + 1}`, city, depots, treasury, nextDepotId);
+      if (!result.ok) {
+        if (result.stage === 'arm') {
+          setNotice(depotArmRefusalMessage(result));
+        } else {
+          // The chip already discouraged this exact point ("blocked", `depotSiteMessage`'s
+          // wording) — a click that lands here anyway (a fast click ahead of the ≤ 20 Hz throttle,
+          // say) gets the same sentence through `Notice` rather than silently doing nothing.
+          setNotice(depotSiteMessage(result, 0));
+        }
+        return;
+      }
+      setTreasury(result.treasury);
+      setDepots((current) => [...current, result.depot]);
+      setNextDepotId(nextId(nextDepotId));
+      setDepotSite(null);
+      setDepotCursorPos(null);
+      setTool('select');
+    },
+    [depots, city, treasury, nextDepotId]
+  );
+
+  // Checks 1-4 run on pointer-move, gated to `DEPOT_SITE_CHECK_HZ` (see that constant's doc
+  // comment for why this is a real-time gate and not a queued debounce). Reads the freshest
+  // `hoverLngLat` off `hoverLngLatRef` rather than depending on it directly, so this effect only
+  // re-subscribes when the tool or the depot list actually changes — never on every pointer move.
+  useEffect(() => {
+    if (tool !== 'place-depot') {
+      setDepotSite(null);
+      setDepotCursorPos(null);
+      return;
+    }
+    const container = mapContainerRef.current;
+    if (!container) return;
+
+    const onPointerMove = (event: PointerEvent) => {
+      const now = performance.now();
+      if (now - depotThrottleRef.current < DEPOT_SITE_CHECK_INTERVAL_MS) return;
+      depotThrottleRef.current = now;
+      // `position: fixed` (DepotCursorChip.css) — viewport coordinates, not container-relative.
+      setDepotCursorPos({ x: event.clientX, y: event.clientY });
+      const lngLat = hoverLngLatRef.current;
+      setDepotSite(lngLat === undefined ? null : isDepotSitable(lngLat, city, depots));
+    };
+    const onPointerLeave = () => {
+      setDepotSite(null);
+      setDepotCursorPos(null);
+    };
+
+    container.addEventListener('pointermove', onPointerMove);
+    container.addEventListener('pointerleave', onPointerLeave);
+    return () => {
+      container.removeEventListener('pointermove', onPointerMove);
+      container.removeEventListener('pointerleave', onPointerLeave);
+    };
+  }, [tool, city, depots]);
 
   const handleMapClick = useCallback(
     (lngLat: LngLat) => {
+      if (tool === 'place-depot') {
+        handlePlaceDepotClick(lngLat);
+        return;
+      }
       if (tool !== 'draw-line' || draft === null) return;
 
       // Charge for the stop before placing it. A refused payment must not place the stop, and a
@@ -585,7 +771,7 @@ export function App() {
       setTreasury(payment.treasury);
       setDraft(result.state);
     },
-    [tool, draft, treasury]
+    [tool, draft, treasury, handlePlaceDepotClick]
   );
 
   const handleUndo = useCallback(() => {
@@ -628,7 +814,10 @@ export function App() {
   }, [draft, nextLineId]);
 
   // Esc unwinds one level at a time, in the manual's stated order: cancel the draft first, then
-  // drop the tool. Panels and selection join this chain as they arrive.
+  // drop the tool. Panels and selection join this chain as they arrive. "Place depot" has no
+  // draft of its own (one click either succeeds or fails outright), so it only ever needs the
+  // second branch — dropping the tool back to `select`, which the depot-hover effect above already
+  // treats as "tool disarmed" and clears `depotSite`/`depotCursorPos` for.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== 'Escape') return;
@@ -643,6 +832,11 @@ export function App() {
   }, [draft, tool, handleCancel]);
 
   const draftSummary = draft === null ? null : summarizeDraft(draft);
+  // The price the depot cursor chip's "Clear to build" line quotes — only ever read while `site.ok`
+  // (`depotSiteMessage`'s own contract), so a capped ladder (no `costUsd`) falls back to 0 rather
+  // than needing a third branch nothing would ever render.
+  const depotArmStatus = canArmDepotTool(depots.length, treasury.cashCents / CENTS_PER_USD);
+  const depotNextCostUsd = depotArmStatus.ok || depotArmStatus.reason === 'insufficient_funds' ? depotArmStatus.costUsd : 0;
 
   return (
     <div className="app">
@@ -654,7 +848,7 @@ export function App() {
         companyName={companyNameRef.current}
         {...(ridersPerDay !== undefined ? { ridersPerDay } : {})}
       />
-      <main className="app-map">
+      <main className="app-map" ref={mapContainerRef}>
         <MapCanvas
           city={city}
           minuteOfDay={calendar.minuteOfDay}
@@ -667,6 +861,19 @@ export function App() {
           onMapClick={handleMapClick}
           onHover={(lngLat) => setHoverLngLat(lngLat ?? undefined)}
         />
+        {/* Depots don't render on the map yet — no marker for a placed depot, no tint for
+            eligible zoning while the tool is armed. `MapCanvas` carries no depot props at all
+            today (grep confirms it); that's the render owner's addition, not this file's — see
+            the report on this wiring pass for the note. The cursor chip below is presentation
+            only and needs none of that to work. */}
+        {tool === 'place-depot' && depotCursorPos !== null && (
+          <DepotCursorChip
+            site={depotSite}
+            nextCostUsd={depotNextCostUsd}
+            x={depotCursorPos.x}
+            y={depotCursorPos.y}
+          />
+        )}
       </main>
       {draftSummary !== null && (
         <DraftBar
@@ -686,7 +893,7 @@ export function App() {
         onReload={handleReloadForUpdate}
         onDismiss={() => {}}
       />
-      <Dock tool={tool} onSelectTool={beginDraft} />
+      <Dock tool={tool} onSelectTool={beginDraft} hasDepot={depots.length > 0} />
     </div>
   );
 }
